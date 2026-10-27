@@ -41,6 +41,27 @@ jobs:
       - name: Dependencias con vulnerabilidades conocidas (SCA)
         run: npm audit --audit-level=high
 
+  # Solo en la plantilla: un repositorio creado desde ella recibe los ficheros de este commit y
+  # nada más, así que se exportan a una carpeta limpia y se comprueban ahí desde cero.
+  repo-nuevo:
+    if: github.repository == 'DivergerThinking/diverger-golden-path'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Exportar el commit a una carpeta limpia
+        run: |
+          mkdir "$RUNNER_TEMP/repo-nuevo"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/repo-nuevo"
+      - name: Comprobar el repositorio nuevo
+        working-directory: ${{ runner.temp }}/repo-nuevo
+        run: |
+          npm ci
+          npm run check
+          npm run build
+
   imagen:
     runs-on: ubuntu-latest
     needs: calidad
