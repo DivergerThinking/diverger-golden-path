@@ -41,6 +41,7 @@ El contexto `ejemplo` solo sirve para que todo funcione desde el primer momento:
 - **Un contexto solo usa el `index.ts` de otro.** `npm run lint:deps` falla si `src/prestamos` importa cualquier otro fichero de `src/equipos`, si `app/` o `web/` entran en lo interno de un contexto, si `lib/` depende de algo de la aplicación o si hay ciclos.
 - **El contrato manda en los datos.** Los tipos salen de OpenAPI con `npm run gen`; no se escriben a mano.
 - **Todo pasa el lint y los tipos** con TypeScript estricto.
+- **Cada commit de un agente dice quién lo hizo.** Lleva los trailers `Diverger-Rol`, `Diverger-Modelo` y `Diverger-Tarea`. El job del worker los añade con el hook de `scripts/git-hooks/` (`git config core.hooksPath scripts/git-hooks` y las variables `DIVERGER_ROL`, `DIVERGER_MODELO` y `DIVERGER_TAREA`). El job `trailers` falla con «Falta el trailer de tarea» si un commit de agente no los lleva. Es de agente si lleva algún trailer de Diverger o un `Co-Authored-By` de Claude. Los commits de personas no los necesitan.
 - **Seguridad en cada PR**, los cuatro análisis del diseño del harness:
   - código fuente (SAST) con CodeQL (`codeql.yml`);
   - dependencias con vulnerabilidades conocidas (SCA) con `npm audit` (`ci.yml`);
