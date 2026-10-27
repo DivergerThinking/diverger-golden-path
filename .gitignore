@@ -10,3 +10,6 @@ src/*/api.gen.ts
 Thumbs.db
 .vscode/
 .idea/
+
+# Worktrees de los subagentes y workflows de Claude Code (ADR 0009 del harness)
+.claude/worktrees/
