@@ -1,0 +1,59 @@
+name: ci
+
+# CI de cada PR: lint, contratos, dependencias entre contextos, tipos, tests, dependencias con
+# vulnerabilidades conocidas (SCA) y la imagen del contenedor con su análisis. El análisis del
+# código (SAST) está en codeql.yml y el de secretos en secretos.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  TRIVY_VERSION: 0.76.1
+  TRIVY_SHA256: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+
+jobs:
+  calidad:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Generar tipos desde los contratos
+        run: npm run gen
+      - name: Lint
+        run: npm run lint
+      - name: Linter de OpenAPI
+        run: npm run lint:openapi
+      - name: Linter de dependencias entre contextos
+        run: npm run lint:deps
+      - name: Tipos
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Dependencias con vulnerabilidades conocidas (SCA)
+        run: npm audit --audit-level=high
+
+  imagen:
+    runs-on: ubuntu-latest
+    needs: calidad
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Construir la imagen
+        run: docker build -t aplicacion:ci .
+      # El binario y no trivy-action, con su suma comprobada, como gitleaks en secretos.yml.
+      - name: Instalar Trivy
+        run: |
+          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sSfL -o "$f" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$f"
+          echo "${TRIVY_SHA256}  $f" | sha256sum -c -
+          tar -xzf "$f" trivy
+      - name: Analizar la imagen
+        run: ./trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress aplicacion:ci
