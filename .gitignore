@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+# Tipos generados desde los contratos OpenAPI: se regeneran con npm run gen.
+src/*/api.gen.ts
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
