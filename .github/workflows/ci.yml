@@ -1,6 +1,6 @@
 name: ci
 
-# CI de cada PR: lint, contratos, dependencias entre contextos, tipos, tests, dependencias con
+# CI de cada PR: trailers de autoría, lint, contratos, dependencias entre contextos, tipos, tests, dependencias con
 # vulnerabilidades conocidas (SCA) y la imagen del contenedor con su análisis. El análisis del
 # código (SAST) está en codeql.yml y el de secretos en secretos.yml.
 
@@ -40,6 +40,19 @@ jobs:
         run: npm test
       - name: Dependencias con vulnerabilidades conocidas (SCA)
         run: npm audit --audit-level=high
+
+  # Cada commit de un agente lleva los trailers de rol, modelo y tarea (scripts/git-hooks).
+  trailers:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Trailers de autoría
+        env:
+          RANGO: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+        run: node scripts/trailers.mjs "$RANGO"
 
   # Solo en la plantilla: un repositorio creado desde ella recibe los ficheros de este commit y
   # nada más, así que se exportan a una carpeta limpia y se comprueban ahí desde cero.
