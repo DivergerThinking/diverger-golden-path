@@ -17,6 +17,9 @@ env:
   TRIVY_SHA256: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
   TOFU_VERSION: 1.12.8
   TOFU_SHA256: e280accc5e074c69d6b731cca939d4d030fdffc616b146e35227cd0c9208ba82
+  # La suma es la de terraform_<versión>_SHA256SUMS de releases.hashicorp.com, firmado por HashiCorp.
+  TERRAFORM_VERSION: 1.16.6
+  TERRAFORM_SHA256: 38034b38d03096399a7a1264a14561a8029b2b496fd1f169452656e53968f1b7
 
 jobs:
   calidad:
@@ -81,10 +84,15 @@ jobs:
           npm run build
 
   # Infraestructura como código (EN-GP-03, ADR 0013 del harness): formato, validación contra el
-  # esquema del proveedor y pruebas del plan con el proveedor simulado. No entra en GCP ni
-  # necesita credenciales; aplicar y detectar la deriva se hace con la sesión de quien aplica.
+  # esquema del proveedor y pruebas del plan con el proveedor simulado, con OpenTofu y después con
+  # Terraform, para vigilar la regla de portabilidad del ADR 0013 (solo lo que entienden los dos).
+  # No entra en GCP ni necesita credenciales; aplicar y detectar la deriva se hace con la sesión de
+  # quien aplica.
   infraestructura:
     runs-on: ubuntu-latest
+    env:
+      # Sin las consultas de versión y avisos de Terraform a checkpoint-api.hashicorp.com.
+      CHECKPOINT_DISABLE: 1
     defaults:
       run:
         working-directory: infra
@@ -107,6 +115,43 @@ jobs:
         run: tofu validate
       - name: Pruebas del plan
         run: tofu test
+      # Validar en el CI propio es un uso interno que permite la licencia de Terraform (BSL 1.1).
+      - name: Instalar Terraform
+        working-directory: ${{ runner.temp }}
+        run: |
+          f="terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          curl -sSfL -o "$f" "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/$f"
+          echo "${TERRAFORM_SHA256}  $f" | sha256sum -c -
+          unzip -q "$f" terraform
+      # Terraform trabaja sobre una copia de infra/ sin .terraform ni .terraform.lock.hcl: el fichero
+      # de bloqueo versionado es el de OpenTofu (registry.opentofu.org); Terraform busca el proveedor
+      # en registry.terraform.io y lo reescribiría. Así no lo usa ni lo cambia.
+      - name: Copia de infra/ para Terraform
+        run: |
+          copia="$RUNNER_TEMP/infra-terraform"
+          cp -r . "$copia"
+          rm -rf "$copia/.terraform" "$copia/.terraform.lock.hcl"
+      - name: Iniciar con Terraform sin estado remoto
+        working-directory: ${{ runner.temp }}/infra-terraform
+        run: terraform init -backend=false -input=false
+      # Con -backend=false Terraform no lee el bloque backend. En la copia ese bloque pasa de "gcs"
+      # a "local" para que Terraform lo lea sin GCS ni credenciales. La plantilla lo deja vacío (el
+      # bucket y el prefijo van en staging.gcs.tfbackend), así que cualquier argumento en él, como
+      # una variable, que solo admite OpenTofu, falla aquí con el nombre del fichero y la línea.
+      - name: Bloque backend con Terraform
+        working-directory: ${{ runner.temp }}/infra-terraform
+        run: |
+          sed -i 's/backend "gcs"/backend "local"/' ./*.tf
+          terraform init -input=false || {
+            echo "::error::El bloque backend de infra/ debe quedar vacío y compatible con Terraform; el bucket y el prefijo van en staging.gcs.tfbackend (ADR 0013 del harness)."
+            exit 1
+          }
+      - name: Validar con Terraform
+        working-directory: ${{ runner.temp }}/infra-terraform
+        run: terraform validate
+      - name: Pruebas del plan con Terraform
+        working-directory: ${{ runner.temp }}/infra-terraform
+        run: terraform test
 
   imagen:
     runs-on: ubuntu-latest

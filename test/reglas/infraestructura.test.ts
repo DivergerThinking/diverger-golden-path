@@ -1,5 +1,6 @@
 // Infraestructura como código (EN-GP-03): lo que se puede comprobar leyendo infra/ sin OpenTofu
-// ni GCP. El plan con el proveedor simulado lo prueba tofu test en el job infraestructura del CI.
+// ni GCP. El plan con el proveedor simulado lo prueban tofu test y terraform test en el job
+// infraestructura del CI.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -94,5 +95,28 @@ describe("infraestructura como código", () => {
     for (const paso of ["tofu fmt -check -recursive", "tofu init -backend=false", "tofu validate", "tofu test"]) {
       expect(ci).toContain(paso);
     }
+  });
+
+  // Regla de portabilidad del ADR 0013 del harness: infra/ solo usa lo que entienden OpenTofu y
+  // Terraform, así que el mismo job lo inicia, valida y prueba también con Terraform.
+  it("el CI pasa también Terraform, con su suma comprobada y sin el fichero de bloqueo de OpenTofu", () => {
+    const ci = leer(".github/workflows/ci.yml");
+    expect(ci).toMatch(/^\s+TERRAFORM_VERSION: \d+\.\d+\.\d+$/m);
+    expect(ci).toMatch(/^\s+TERRAFORM_SHA256: [0-9a-f]{64}$/m);
+    expect(ci).toContain("https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/");
+    expect(ci).toContain('echo "${TERRAFORM_SHA256}  $f" | sha256sum -c -');
+    expect(ci).toContain('rm -rf "$copia/.terraform" "$copia/.terraform.lock.hcl"');
+    expect(ci).toContain(`sed -i 's/backend "gcs"/backend "local"/'`);
+    for (const paso of ["terraform init -backend=false", "terraform init -input=false", "terraform validate", "terraform test"]) {
+      expect(ci).toContain(paso);
+    }
+    // Terraform trabaja en la copia: nunca en infra/, donde reescribiría el bloqueo de OpenTofu.
+    const pasos = ci.split(/\n(?=\s+- (?:name|uses):)/).filter((paso) => /\bterraform (init|validate|test)\b/.test(paso));
+    expect(pasos).toHaveLength(4);
+    for (const paso of pasos) expect(paso).toContain("working-directory: ${{ runner.temp }}/infra-terraform");
+  });
+
+  it("el bloque backend está vacío: el bucket y el prefijo van en staging.gcs.tfbackend", () => {
+    expect(tf.match(/backend "[a-z]+"\s*\{[^}]*\}/g)).toEqual(['backend "gcs" {}']);
   });
 });
