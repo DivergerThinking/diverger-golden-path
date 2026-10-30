@@ -117,7 +117,7 @@ describe("los workers no pueden desplegar", () => {
   );
 
   it("ningún workflow da id-token a todos sus jobs", () => {
-    for (const { nombre, texto } of workflows) expect(cabecera(texto), nombre).not.toContain("id-token");
+    for (const { nombre, texto } of workflows) expect(cabecera(texto).replace(/^\s*#.*$/gm, ""), nombre).not.toContain("id-token");
   });
 
   it("solo los jobs del environment staging usan la cuenta de despliegue", () => {
@@ -132,6 +132,18 @@ describe("los workers no pueden desplegar", () => {
     const conAgente = todos.filter(({ cuerpo }) => /anthropics\/claude-code-action|\bclaude -p\b|@anthropic-ai\/claude-code/.test(cuerpo));
     for (const { nombre, job, cuerpo } of conAgente) {
       expect(cuerpo, `${nombre}/${job}`).not.toMatch(/environment:|GCP_DEPLOY_SA/);
+    }
+  });
+
+  // ADR 0007, revisado el 30/10/2026: un worker puede tener id-token para la telemetría, pero en GCP
+  // solo puede pedir la cuenta de telemetría, que solo escribe logs y métricas.
+  it("un job que lanza Claude Code con id-token solo pide la cuenta de telemetría", () => {
+    const conAgente = todos.filter(({ cuerpo }) => /anthropics\/claude-code-action|\bclaude -p\b|@anthropic-ai\/claude-code/.test(cuerpo));
+    expect(conAgente.map(({ nombre, job }) => `${nombre}/${job}`)).toContain("diverger-worker.yml/worker");
+    for (const { nombre, job, cuerpo } of conAgente.filter(({ cuerpo }) => /^ {6}id-token: write\b/m.test(cuerpo))) {
+      const cuentas = [...cuerpo.matchAll(/service_account: (.+)$/gm)].map((m) => m[1]?.trim());
+      expect(cuentas, `${nombre}/${job}`).toEqual(["${{ vars.GCP_TELEMETRY_SA }}"]);
+      expect(cuerpo, `${nombre}/${job}`).not.toMatch(/^ {4}environment:/m);
     }
   });
 

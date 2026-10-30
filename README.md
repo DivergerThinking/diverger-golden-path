@@ -48,13 +48,44 @@ El contexto `ejemplo` solo sirve para que todo funcione desde el primer momento:
 - **Un contexto solo usa el `index.ts` de otro.** `npm run lint:deps` falla si `src/prestamos` importa cualquier otro fichero de `src/equipos`, si `app/` o `web/` entran en lo interno de un contexto, si `lib/` depende de algo de la aplicación o si hay ciclos.
 - **El contrato manda en los datos.** Los tipos salen de OpenAPI con `npm run gen`; no se escriben a mano.
 - **Todo pasa el lint y los tipos** con TypeScript estricto.
-- **Cada commit de un agente dice quién lo hizo.** Lleva los trailers `Diverger-Rol`, `Diverger-Modelo` y `Diverger-Tarea`. El job del worker los añade con el hook de `scripts/git-hooks/` (`git config core.hooksPath scripts/git-hooks` y las variables `DIVERGER_ROL`, `DIVERGER_MODELO` y `DIVERGER_TAREA`). El job `trailers` falla con «Falta el trailer de tarea» si un commit de agente no los lleva. Es de agente si lleva algún trailer de Diverger o un `Co-Authored-By` de Claude. Los commits de personas no los necesitan.
+- **Cada commit de un agente dice quién lo hizo.** Lleva los trailers `Diverger-Rol`, `Diverger-Modelo` y `Diverger-Tarea`. El job del worker (`diverger-worker.yml`) los pone en su commit; un agente que hace commits en una sesión los añade con el hook de `scripts/git-hooks/` (`git config core.hooksPath scripts/git-hooks` y las variables `DIVERGER_ROL`, `DIVERGER_MODELO` y `DIVERGER_TAREA`). El job `trailers` falla con «Falta el trailer de tarea» si un commit de agente no los lleva. Es de agente si lleva algún trailer de Diverger o un `Co-Authored-By` de Claude. Los commits de personas no los necesitan.
 - **La configuración del harness tiene dueño.** `.github/CODEOWNERS` hace al titular propietario de `.diverger/settings.json` (el modo de autonomía, entre otras cosas) y del propio CODEOWNERS. `node scripts/codeowners.mjs` falla si dejan de estar cubiertos, por ejemplo con una regla posterior sin propietarios. Con el ruleset `codeowners`, ni un agente ni nadie con escritura los cambia sin la aprobación del titular, también en modo yolo.
 - **Seguridad en cada PR**, los cuatro análisis del diseño del harness:
   - código fuente (SAST) con CodeQL (`codeql.yml`);
   - dependencias con vulnerabilidades conocidas (SCA) con `npm audit` (`ci.yml`);
   - secretos con gitleaks (`secretos.yml`);
   - imagen del contenedor con Trivy (`ci.yml`).
+
+## Worker de cada tarea
+
+`.github/workflows/diverger-worker.yml` ejecuta una tarea del plan en su propio job (EN-EJE-02). Lo lanza el bucle desatendido del harness con el contrato del ADR 0016 del harness:
+
+| | |
+|---|---|
+| **Lanzamiento** | `workflow_dispatch` en la rama base con las entradas `initiative`, `task` y `run` (el identificador de la ejecución del bucle) |
+| **Nombre del job** | `diverger-worker <task> <run>` |
+| **Rama y PR** | Rama `diverger/<iniciativa>/<tarea>`; la PR lleva `<!-- diverger:task=<tarea>;run=<run> -->` e incluye `tasks/<tarea>.json` en `done` |
+| **Resultado** | Éxito: el job termina con una PR abierta. Fallo: termina sin PR y el resumen del job dice por qué |
+
+Qué hace el job, en orden:
+
+1. Comprueba las entradas y que la tarea existe y está pendiente en la rama base. Si no, termina sin gastar nada.
+2. Crea un worktree en la rama de la tarea. Si el repositorio tiene telemetría, entra en GCP con la cuenta de telemetría, arranca el OpenTelemetry Collector en el runner y escribe la configuración gestionada de Claude Code. Después lanza el worker con Claude Code en modo `dontAsk`.
+3. Comprueba el resultado: la tarea pasa a `done` sin cambiar nada más de ella, no toca otras tareas ni `.github/workflows/`.
+4. Pide un token de la GitHub App `diverger-harness`, hace el commit con los trailers (`Diverger-Rol`, `Diverger-Modelo`, `Diverger-Tarea`, `Diverger-Iniciado-por` y `Co-authored-by` de quien lo lanzó), empuja la rama y abre la PR.
+5. Siempre, también si algo falla o se corta: para el Collector para que mande lo pendiente, elimina el worktree y escribe el resumen con el resultado, el coste y las herramientas denegadas.
+
+**Permisos.** El modelo solo recibe la clave de Anthropic. No tiene ningún token de GitHub: el checkout no guarda credenciales y el token de la App se pide después del worker, con permiso solo para contenido y PR, así que no puede lanzar otros workers ni cambiar workflows. El token del propio job solo lee el contenido. El job tiene `id-token: write` solo para la telemetría: en GCP, la cuenta de telemetría (que solo escribe logs y métricas) solo acepta este workflow y `worker-humo.yml`, y la cuenta de despliegue solo acepta el environment `staging`, que el worker no usa. Así que, aunque pida un token, no puede desplegar. Además, al modelo se le quitan del entorno las variables para pedir tokens de OIDC y las credenciales de GCP. Herramientas: las únicas que existen son `Read`, `Glob`, `Grep`, `Edit`, `Write` y `Bash`; las permitidas son leer y editar el fichero de la tarea y `pruebas/worker/`. Cualquier otra llamada se deniega y el worker sigue sin ella; `Bash` siempre se deniega, también los comandos de solo lectura. Con `--setting-sources user` y `--strict-mcp-config`, el `.claude/settings.json` y el `.mcp.json` del repositorio no pueden añadir permisos, hooks ni servidores MCP. El commit y el push no ejecutan los hooks del repositorio.
+
+**Topes.** Variables del repositorio, con valores por defecto pequeños: `DIVERGER_WORKER_MAX_BUDGET_USD` (`--max-budget-usd`, 0.50 USD), `DIVERGER_WORKER_MAX_TURNS` (`--max-turns`, 10) y `DIVERGER_WORKER_MODEL` (`claude-haiku-5-5`). El paso del worker se corta a los 15 minutos y el job a los 30.
+
+**Red.** Un runner hospedado de GitHub no permite limitar la salida a internet: no hay cortafuegos de salida configurable. Lo que sí se limita es lo que puede hacer el modelo: sin `WebFetch`, `WebSearch` ni `Bash`, su única conexión es la API de Anthropic, y `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` apaga el tráfico no esencial de Claude Code. Los pasos del propio job (npm, git y la API de GitHub) sí salen a internet. Una lista de destinos permitidos para todo el job necesitaría un runner propio con cortafuegos o una acción de terceros que filtre la salida; queda pendiente.
+
+**Telemetría.** Con las variables `GCP_WIF_PROVIDER`, `GCP_TELEMETRY_SA` y `GCP_PROJECT_ID`, el job manda la telemetría de Claude Code a Cloud Logging y Cloud Monitoring con el Collector de `.github/telemetria/collector.yaml`, y de ahí a BigQuery (ADR 0007 del harness). Las variables del exportador van en la configuración gestionada (`/etc/claude-code/managed-settings.json`, a partir de `.github/telemetria/managed-settings.json`), porque Claude Code no las acepta del repositorio; el texto de los prompts, las respuestas y las herramientas no se manda. Los eventos llevan `github.run_id`, `diverger.task` y `diverger.run`. Sin esas variables, el job se salta la telemetría. El repositorio tiene que estar en `REPOS` de `infra/entornos/gcp.sh` del harness para que GCP acepte el token.
+
+**Worker de prueba.** Hasta que exista el worker que implementa la tarea (EN-FM-02, `diverger-dev`), el paso «Worker» intenta un `curl` con `Bash`, que se deniega, marca su tarea como hecha y crea `pruebas/worker/<tarea>.md`.
+
+Necesita, en el repositorio de la aplicación, el secreto `ANTHROPIC_API_KEY`, la variable `DIVERGER_HARNESS_APP_ID`, el secreto `DIVERGER_HARNESS_APP_KEY` y la App `diverger-harness` instalada (`infra/entornos/LEEME.md` del harness). `test/reglas/worker.test.ts` comprueba la forma del workflow y ejecuta con bash los pasos que no necesitan GitHub.
 
 ## Comandos
 
