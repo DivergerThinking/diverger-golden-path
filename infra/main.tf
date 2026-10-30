@@ -6,7 +6,7 @@ locals {
   indices = jsondecode(file("${path.module}/${var.fichero_indices}")).indexes
 }
 
-# Las API que usa la aplicación. En el proyecto del harness ya las activa gcp.sh; se declaran
+# Las API que usa la aplicación; Cloud Deploy prepara y despliega cada versión con Cloud Build. En el proyecto del harness ya las activa gcp.sh; se declaran
 # para que la infraestructura también funcione en un proyecto nuevo. Al destruir no se apagan:
 # otras aplicaciones del mismo proyecto las usan.
 resource "google_project_service" "apis" {
@@ -14,6 +14,8 @@ resource "google_project_service" "apis" {
     "run.googleapis.com",
     "firestore.googleapis.com",
     "artifactregistry.googleapis.com",
+    "clouddeploy.googleapis.com",
+    "cloudbuild.googleapis.com",
   ])
 
   service            = each.value
