@@ -11,6 +11,7 @@ Plantilla de repositorio con la que el harness de Diverger crea cada aplicación
 | Contratos | OpenAPI 3.1 por contexto, con Redocly como linter y tipos generados con openapi-typescript |
 | Dependencias entre contextos | dependency-cruiser |
 | Despliegue | Una imagen con el Dockerfile, para Cloud Run |
+| Infraestructura | Cloud Run, Firestore y Artifact Registry descritos con OpenTofu en `infra/` |
 
 ## Crear una aplicación
 
@@ -31,6 +32,7 @@ src/<id>/...                           lógica interna del contexto
 lib/                                   código común sin negocio (por ejemplo, el inicio de sesión)
 app/                                   servidor: arranque, autenticación y registro de los contextos
 web/                                   frontend en React
+infra/                                 infraestructura como código de la aplicación en GCP
 test/                                  pruebas de las reglas del repo
 ```
 
@@ -57,6 +59,48 @@ El contexto `ejemplo` solo sirve para que todo funcione desde el primer momento:
 | `npm run dev` | Frontend con recarga en el puerto 5173; las peticiones a `/api` van al servidor del puerto 8080 |
 | `npm run build` | Construye el frontend en `dist/web` y el servidor en `dist/server` |
 | `npm start` | Arranca el servidor construido |
+
+## Infraestructura como código
+
+`infra/` describe con [OpenTofu](https://opentofu.org) lo que necesita la aplicación en GCP, todo con el nombre de la aplicación y en `europe-west1` (ADR 0013 del harness):
+
+| Fichero | Qué describe |
+|---|---|
+| `cloud_run.tf` | El servicio de Cloud Run: cuenta de ejecución, escala de 0 a 2 instancias, 1 CPU y 512 MiB, sonda de arranque en `/api/salud` y las variables `FIRESTORE_DATABASE` y `GOOGLE_CLIENT_ID` |
+| `firestore.tf` | Una base de Firestore propia de la aplicación (nativa, con transacciones pesimistas), sus índices compuestos y el permiso de la cuenta de ejecución sobre esa base y ninguna otra |
+| `firestore.indexes.json` | Los índices compuestos, en el formato de Firebase. La plantilla no trae ninguno: los añade el arquitecto cuando una consulta los pide |
+| `artifact_registry.tf` | El repositorio de imágenes, que conserva las 10 versiones más recientes y borra las imágenes sin etiqueta de más de 7 días |
+| `staging.tfvars` y `staging.gcs.tfbackend` | Los valores de staging en el proyecto de pruebas y dónde se guarda su estado. Una aplicación nueva cambia `aplicacion` y el prefijo por su nombre |
+
+La imagen del servicio es del despliegue continuo: la infraestructura crea el servicio con una imagen de ejemplo de Google y no vuelve a tocarla. El despliegue solo cambia la imagen (`gcloud run deploy <aplicacion> --image <imagen> --region europe-west1`); cualquier otro cambio en el servicio se hace en `infra/`.
+
+### Aplicar
+
+Hace falta OpenTofu 1.12 o posterior (`winget install OpenTofu.Tofu` en Windows) y la sesión de gcloud de quien aplica, con permisos sobre el proyecto (`gcloud auth application-default login`). No hay ficheros de claves: el proveedor usa esa sesión. El estado se guarda en el bucket de `staging.gcs.tfbackend`, que tiene que existir antes.
+
+```sh
+cd infra
+tofu init -backend-config=staging.gcs.tfbackend
+tofu plan -var-file=staging.tfvars
+tofu apply -var-file=staging.tfvars
+```
+
+Al terminar, `tofu output` da la URL del servicio, la ruta del repositorio de imágenes y el nombre de la base.
+
+### Detectar la deriva
+
+Un cambio hecho a mano (en la consola o con gcloud) es deriva: el servicio ya no es lo que dice el código. `tofu plan -detailed-exitcode` la enseña y termina con el código 2; con el código 0 no hay ninguna. `tofu apply` la revierte al estado descrito en `infra/`.
+
+```sh
+tofu plan -var-file=staging.tfvars -detailed-exitcode
+tofu apply -var-file=staging.tfvars
+```
+
+Solo la imagen y la revisión del servicio, que cambia el despliegue, quedan fuera de esa comprobación.
+
+### Pruebas sin tocar GCP
+
+El job `infraestructura` del CI pasa `tofu fmt -check`, `tofu validate` y `tofu test`. Las pruebas de `infra/tests/` comprueban el plan con el proveedor simulado: qué recursos se crean, con qué nombre y en qué región, la cuenta de ejecución, el permiso limitado a la base, la protección de borrado y los índices. `test/reglas/infraestructura.test.ts` comprueba además que no hay credenciales ni estado en el repositorio y que la deriva solo ignora la imagen y la revisión. En local, desde `infra/`: `tofu init -backend=false` y `tofu test`.
 
 ## Inicio de sesión con Google
 
