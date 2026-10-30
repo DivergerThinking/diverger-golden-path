@@ -56,6 +56,18 @@ El contexto `ejemplo` solo sirve para que todo funcione desde el primer momento:
   - secretos con gitleaks (`secretos.yml`);
   - imagen del contenedor con Trivy (`ci.yml`).
 
+## Bucle desatendido
+
+`.github/workflows/diverger-bucle.yml` construye el plan de una iniciativa sin una sesión abierta (HU-EJE-01, ADR 0016 del harness). Se lanza a mano, con la iniciativa:
+
+```sh
+gh workflow run diverger-bucle.yml -f initiative=<iniciativa> [-f max-workers=1] [-f restart=true]
+```
+
+Es un programa sin modelo, `bucle.py` del núcleo, que el job descarga del harness con un token de la GitHub App de solo lectura. En cada vuelta actualiza la rama base, mira el job y la PR de cada worker y lanza `diverger-worker.yml` para las siguientes tareas listas, de una en una por defecto. Se para cuando todas las tareas están hechas, una falla tres veces, se agota el presupuesto de pasos o una espera su test de aceptación; el resumen del job dice por qué. Si se relanza, reanuda sin repetir lo hecho. `restart` levanta una parada por bloqueo o por presupuesto.
+
+Necesita la GitHub App `diverger-harness` instalada en este repositorio (Actions: escritura, Contents y Pull requests: lectura) y en el harness (Contents: lectura), con las variables `DIVERGER_HARNESS_APP_ID` y el secreto `DIVERGER_HARNESS_APP_KEY`. La variable `DIVERGER_HARNESS_REF` fija la versión del núcleo (por defecto, `main`).
+
 ## Worker de cada tarea
 
 `.github/workflows/diverger-worker.yml` ejecuta una tarea del plan en su propio job (EN-EJE-02). Lo lanza el bucle desatendido del harness con el contrato del ADR 0016 del harness:
