@@ -1,8 +1,8 @@
 name: ci
 
 # CI de cada PR: trailers de autoría, lint, contratos, dependencias entre contextos, tipos, tests, dependencias con
-# vulnerabilidades conocidas (SCA) y la imagen del contenedor con su análisis. El análisis del
-# código (SAST) está en codeql.yml y el de secretos en secretos.yml.
+# vulnerabilidades conocidas (SCA), la infraestructura como código y la imagen del contenedor con
+# su análisis. El análisis del código (SAST) está en codeql.yml y el de secretos en secretos.yml.
 
 on:
   push:
@@ -15,6 +15,8 @@ permissions:
 env:
   TRIVY_VERSION: 0.76.1
   TRIVY_SHA256: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+  TOFU_VERSION: 1.12.8
+  TOFU_SHA256: e280accc5e074c69d6b731cca939d4d030fdffc616b146e35227cd0c9208ba82
 
 jobs:
   calidad:
@@ -77,6 +79,34 @@ jobs:
           npm ci
           npm run check
           npm run build
+
+  # Infraestructura como código (EN-GP-03, ADR 0013 del harness): formato, validación contra el
+  # esquema del proveedor y pruebas del plan con el proveedor simulado. No entra en GCP ni
+  # necesita credenciales; aplicar y detectar la deriva se hace con la sesión de quien aplica.
+  infraestructura:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # El binario y no setup-opentofu, con su suma comprobada, como Trivy y gitleaks.
+      - name: Instalar OpenTofu
+        working-directory: ${{ runner.temp }}
+        run: |
+          f="tofu_${TOFU_VERSION}_linux_amd64.zip"
+          curl -sSfL -o "$f" "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/$f"
+          echo "${TOFU_SHA256}  $f" | sha256sum -c -
+          unzip -q "$f" tofu
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Formato
+        run: tofu fmt -check -recursive -diff
+      - name: Iniciar sin estado remoto
+        run: tofu init -backend=false -input=false
+      - name: Validar
+        run: tofu validate
+      - name: Pruebas del plan
+        run: tofu test
 
   imagen:
     runs-on: ubuntu-latest
