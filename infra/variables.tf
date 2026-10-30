@@ -31,6 +31,26 @@ variable "cuenta_ejecucion" {
   }
 }
 
+variable "cuenta_cloud_deploy" {
+  description = "Cuenta de servicio con la que Cloud Deploy prepara y despliega cada versión (diverger-clouddeploy en el proyecto del harness)."
+  type        = string
+
+  validation {
+    condition     = endswith(var.cuenta_cloud_deploy, ".iam.gserviceaccount.com")
+    error_message = "La cuenta de Cloud Deploy tiene que ser una cuenta de servicio (...@<proyecto>.iam.gserviceaccount.com)."
+  }
+}
+
+variable "almacen_cloud_deploy" {
+  description = "Bucket de Cloud Storage donde el CI deja las fuentes de cada versión y Cloud Deploy lo que genera (gs://<proyecto>-clouddeploy en el proyecto del harness)."
+  type        = string
+
+  validation {
+    condition     = can(regex("^gs://[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$", var.almacen_cloud_deploy))
+    error_message = "El almacén de Cloud Deploy es un bucket, gs://<nombre>, sin carpeta ni barra final."
+  }
+}
+
 variable "imagen_inicial" {
   description = "Imagen con la que se crea el servicio la primera vez. Después la cambia el despliegue continuo y la infraestructura no la toca."
   type        = string

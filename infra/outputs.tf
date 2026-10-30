@@ -17,3 +17,8 @@ output "base_de_datos" {
   description = "Base de Firestore de la aplicación (variable FIRESTORE_DATABASE del servicio)."
   value       = google_firestore_database.datos.name
 }
+
+output "cadena_despliegue" {
+  description = "Cadena de Cloud Deploy de la aplicación (gcloud deploy releases create --delivery-pipeline)."
+  value       = google_clouddeploy_delivery_pipeline.aplicacion.name
+}

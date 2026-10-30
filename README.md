@@ -76,9 +76,10 @@ El contexto `ejemplo` solo sirve para que todo funcione desde el primer momento:
 | `firestore.tf` | Una base de Firestore propia de la aplicación (nativa, con transacciones pesimistas), sus índices compuestos y el permiso de la cuenta de ejecución sobre esa base y ninguna otra |
 | `firestore.indexes.json` | Los índices compuestos, en el formato de Firebase. La plantilla no trae ninguno: los añade el arquitecto cuando una consulta los pide |
 | `artifact_registry.tf` | El repositorio de imágenes, que conserva las 10 versiones más recientes y borra las imágenes sin etiqueta de más de 7 días |
+| `cloud_deploy.tf` | La cadena de Cloud Deploy de la aplicación, con un único destino: su Cloud Run de staging. Cloud Deploy despliega con su propia cuenta (`cuenta_cloud_deploy`) y guarda lo que genera en el almacén del proyecto (`almacen_cloud_deploy`) |
 | `staging.tfvars` y `staging.gcs.tfbackend` | Los valores de staging en el proyecto de pruebas y dónde se guarda su estado. Una aplicación nueva cambia `aplicacion` y el prefijo por su nombre |
 
-La imagen del servicio es del despliegue continuo: la infraestructura crea el servicio con una imagen de ejemplo de Google y no vuelve a tocarla. El despliegue solo cambia la imagen (`gcloud run deploy <aplicacion> --image <imagen> --region europe-west1`); cualquier otro cambio en el servicio se hace en `infra/`.
+La imagen del servicio es del despliegue continuo: la infraestructura crea el servicio con una imagen de ejemplo de Google y no vuelve a tocarla. El despliegue solo cambia la imagen (ver *Despliegue en staging*); cualquier otro cambio en el servicio se hace en `infra/`.
 
 ### Aplicar
 
@@ -112,6 +113,29 @@ Solo la imagen y la revisión del servicio, que cambia el despliegue, quedan fue
 
 El job `infraestructura` del CI pasa `tofu fmt -check`, `tofu validate` y `tofu test`, y después `terraform init`, `terraform validate` y `terraform test` sobre una copia de `infra/` sin el fichero de bloqueo, que es el de OpenTofu: así vigila la regla de portabilidad del ADR 0013 del harness (solo lo que entienden OpenTofu y Terraform; nada de variables en el bloque `backend`, `enabled` ni otras funciones propias de OpenTofu). Las pruebas de `infra/tests/` comprueban el plan con el proveedor simulado: qué recursos se crean, con qué nombre y en qué región, la cuenta de ejecución, el permiso limitado a la base, la protección de borrado y los índices. `test/reglas/infraestructura.test.ts` comprueba además que no hay credenciales ni estado en el repositorio y que la deriva solo ignora la imagen y la revisión. En local, desde `infra/`: `tofu init -backend=false` y `tofu test`.
 
-## Inicio de sesión con Google
+## Despliegue en staging
+
+Al integrar un PR en `main`, el job `despliegue` de `ci.yml` lleva la aplicación al Cloud Run de staging (EN-FM-04, ADR 0015 del harness):
+
+1. Espera a que pasen `calidad`, `imagen` e `infraestructura`, y toma la imagen que `imagen` construyó y analizó con Trivy: se despliega esa y no otra.
+2. Entra en GCP con Workload Identity Federation, sin claves, como la cuenta de despliegue (`GCP_DEPLOY_SA`).
+3. Sube la imagen a Artifact Registry, etiquetada con el commit, y la despliega por su digest.
+4. Crea una versión en la cadena de Cloud Deploy de la aplicación. El manifiesto es el del servicio tal como está en staging, con la imagen nueva y sin nada más: el resto del servicio lo describe `infra/`.
+5. Espera a que Cloud Deploy termine y comprueba que staging sirve la imagen nueva y que `/api/salud` responde. La URL queda en el environment `staging` del repositorio.
+
+El proyecto, la región, el nombre de la aplicación y el almacén de Cloud Deploy salen de `infra/staging.tfvars`, el mismo fichero que usa la infraestructura.
+
+**Quién puede desplegar.** La cuenta de despliegue solo acepta tokens de los jobs del environment `staging` de los repositorios autorizados, y ese environment solo admite `main`. Un worker corre en su propio job, fuera del environment: aunque pida un token de GitHub (lo necesita para la telemetría), GCP no le deja usar la cuenta de despliegue. Además, la identidad del harness no puede cambiar los workflows.
+
+**Sin despliegue configurado,** el job no corre y el pipeline termina con el PR integrado. Para configurarlo en un repositorio creado desde la plantilla, una persona con permisos sobre el proyecto de GCP:
+
+1. Añade el repositorio a `DEPLOY_REPOS` y vuelve a ejecutar `infra/entornos/gcp.sh` del harness, que lo autoriza en la cuenta de despliegue solo desde su environment `staging`.
+2. Aplica `infra/` (*Aplicar*): crea, además del servicio, la cadena de Cloud Deploy.
+3. Crea el environment `staging`, limitado a `main`, con `infra/github/entorno-staging.sh <propietario>/<aplicacion>` del harness.
+4. Da al repositorio las variables `GCP_WIF_PROVIDER` y `GCP_DEPLOY_SA` (no son secretos), con los valores que imprime `gcp.sh`.
+
+Para volver a desplegar `main` sin un commit nuevo: *Actions → ci → Run workflow* sobre `main`.
+
+
 
 El servidor necesita la variable `GOOGLE_CLIENT_ID`, el ID de un cliente OAuth de tipo «Aplicación web» de Google Cloud, con la URL de la aplicación entre los orígenes de JavaScript autorizados. El frontend lo pide a `/api/config`, así que la misma imagen sirve en cualquier entorno. Cada petición a `/api` lleva el token en `Authorization: Bearer <token>`. Solo `/api/salud` y `/api/config` son públicas.
