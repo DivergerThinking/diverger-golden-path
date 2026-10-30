@@ -4,9 +4,11 @@
 mock_provider "google" {}
 
 variables {
-  proyecto         = "proyecto-de-prueba"
-  aplicacion       = "prestamos"
-  cuenta_ejecucion = "diverger-run@proyecto-de-prueba.iam.gserviceaccount.com"
+  proyecto             = "proyecto-de-prueba"
+  aplicacion           = "prestamos"
+  cuenta_ejecucion     = "diverger-run@proyecto-de-prueba.iam.gserviceaccount.com"
+  cuenta_cloud_deploy  = "diverger-clouddeploy@proyecto-de-prueba.iam.gserviceaccount.com"
+  almacen_cloud_deploy = "gs://proyecto-de-prueba-clouddeploy"
 }
 
 run "crea_cloud_run_firestore_y_artifact_registry_en_la_region" {
@@ -128,6 +130,52 @@ run "crea_un_indice_por_cada_entrada_de_firestore_indexes_json" {
     condition     = google_firestore_index.indices["equipos:etiquetas:CONTAINS,nombre:ASCENDING"].fields[0].array_config == "CONTAINS" && google_firestore_index.indices["equipos:etiquetas:CONTAINS,nombre:ASCENDING"].query_scope == "COLLECTION"
     error_message = "Los campos de tipo lista usan arrayConfig y el ámbito por defecto es COLLECTION."
   }
+}
+
+# Despliegue continuo (EN-FM-04): una cadena de Cloud Deploy con un único destino, el Cloud Run de
+# staging de la aplicación, sin aprobación y con la cuenta de Cloud Deploy del proyecto.
+run "despliega_en_staging_con_cloud_deploy" {
+  command = plan
+
+  assert {
+    condition     = google_clouddeploy_delivery_pipeline.aplicacion.name == "prestamos" && google_clouddeploy_delivery_pipeline.aplicacion.location == "europe-west1"
+    error_message = "La cadena de Cloud Deploy se llama como la aplicación y está en europe-west1."
+  }
+
+  assert {
+    condition     = length(google_clouddeploy_delivery_pipeline.aplicacion.serial_pipeline[0].stages) == 1 && google_clouddeploy_delivery_pipeline.aplicacion.serial_pipeline[0].stages[0].target_id == "prestamos-staging"
+    error_message = "La cadena tiene un único destino, staging; el canary y producción son de la Fase II."
+  }
+
+  assert {
+    condition     = google_clouddeploy_target.staging.run[0].location == "projects/proyecto-de-prueba/locations/europe-west1" && google_clouddeploy_target.staging.require_approval == false
+    error_message = "El destino es el Cloud Run del proyecto en europe-west1 y no pide aprobación."
+  }
+
+  assert {
+    condition     = google_clouddeploy_target.staging.execution_configs[0].service_account == "diverger-clouddeploy@proyecto-de-prueba.iam.gserviceaccount.com" && toset(google_clouddeploy_target.staging.execution_configs[0].usages) == toset(["RENDER", "DEPLOY"])
+    error_message = "Cloud Deploy prepara y despliega con su propia cuenta, no con la cuenta por defecto de Compute Engine."
+  }
+
+  assert {
+    condition     = google_clouddeploy_target.staging.execution_configs[0].artifact_storage == "gs://proyecto-de-prueba-clouddeploy/prestamos/artefactos"
+    error_message = "Lo que genera Cloud Deploy va al almacén del proyecto, en la carpeta de la aplicación."
+  }
+
+  assert {
+    condition     = output.cadena_despliegue == "prestamos"
+    error_message = "La salida cadena_despliegue da el nombre de la cadena para el CI."
+  }
+}
+
+run "rechaza_un_almacen_que_no_es_un_bucket" {
+  command = plan
+
+  variables {
+    almacen_cloud_deploy = "gs://proyecto-de-prueba-clouddeploy/fuentes/"
+  }
+
+  expect_failures = [var.almacen_cloud_deploy]
 }
 
 run "rechaza_un_nombre_de_aplicacion_no_valido" {
