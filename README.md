@@ -110,7 +110,7 @@ Solo la imagen y la revisión del servicio, que cambia el despliegue, quedan fue
 
 ### Pruebas sin tocar GCP
 
-El job `infraestructura` del CI pasa `tofu fmt -check`, `tofu validate` y `tofu test`. Las pruebas de `infra/tests/` comprueban el plan con el proveedor simulado: qué recursos se crean, con qué nombre y en qué región, la cuenta de ejecución, el permiso limitado a la base, la protección de borrado y los índices. `test/reglas/infraestructura.test.ts` comprueba además que no hay credenciales ni estado en el repositorio y que la deriva solo ignora la imagen y la revisión. En local, desde `infra/`: `tofu init -backend=false` y `tofu test`.
+El job `infraestructura` del CI pasa `tofu fmt -check`, `tofu validate` y `tofu test`, y después `terraform init`, `terraform validate` y `terraform test` sobre una copia de `infra/` sin el fichero de bloqueo, que es el de OpenTofu: así vigila la regla de portabilidad del ADR 0013 del harness (solo lo que entienden OpenTofu y Terraform; nada de variables en el bloque `backend`, `enabled` ni otras funciones propias de OpenTofu). Las pruebas de `infra/tests/` comprueban el plan con el proveedor simulado: qué recursos se crean, con qué nombre y en qué región, la cuenta de ejecución, el permiso limitado a la base, la protección de borrado y los índices. `test/reglas/infraestructura.test.ts` comprueba además que no hay credenciales ni estado en el repositorio y que la deriva solo ignora la imagen y la revisión. En local, desde `infra/`: `tofu init -backend=false` y `tofu test`.
 
 ## Inicio de sesión con Google
 
