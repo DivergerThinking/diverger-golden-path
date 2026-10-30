@@ -58,17 +58,26 @@ describe("forma del workflow del worker", () => {
     expect(WF["run-name"]).toBe("diverger-worker ${{ inputs.task }} ${{ inputs.run }}");
   });
 
-  it("el token del job solo lee el contenido: sin id-token, sin actions y sin escritura", () => {
+  it("el token del job solo lee el contenido; id-token solo en el job, para la telemetría", () => {
     expect(WF.permissions).toEqual({ contents: "read" });
     expect(Object.keys(WF.jobs)).toEqual(["worker"]);
-    expect(JOB.permissions).toEqual({ contents: "read" });
-    expect(SIN_COMENTARIOS).not.toMatch(/id-token/);
+    expect(JOB.permissions).toEqual({ contents: "read", "id-token": "write" });
   });
 
-  it("no tiene credenciales de despliegue: solo la clave de Anthropic y la de la App", () => {
+  it("no tiene credenciales de despliegue: solo la clave de Anthropic, la de la App y la cuenta de telemetría", () => {
     const secretos = new Set([...TEXTO.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]));
     expect([...secretos].sort()).toEqual(["ANTHROPIC_API_KEY", "DIVERGER_HARNESS_APP_KEY"]);
-    expect(SIN_COMENTARIOS).not.toMatch(/google-github-actions|GCP_|workload_identity|service_account/);
+    const variablesGcp = new Set([...SIN_COMENTARIOS.matchAll(/vars\.(GCP_[A-Z0-9_]+)/g)].map((m) => m[1]));
+    expect([...variablesGcp].sort()).toEqual(["GCP_PROJECT_ID", "GCP_TELEMETRY_SA", "GCP_WIF_PROVIDER"]);
+    expect(SIN_COMENTARIOS).not.toMatch(/GCP_DEPLOY_SA|GCP_RUN_SA|GCP_CLOUDDEPLOY|environment:|credentials_json|gcloud|setup-gcloud/);
+    // La única cuenta que pide es la de telemetría.
+    const auth = PASOS.filter((p) => p.uses?.startsWith("google-github-actions/"));
+    expect(auth).toHaveLength(1);
+    expect(auth[0]?.uses).toMatch(/^google-github-actions\/auth@[0-9a-f]{40}$/);
+    expect(auth[0]?.with).toEqual({
+      workload_identity_provider: "${{ vars.GCP_WIF_PROVIDER }}",
+      service_account: "${{ vars.GCP_TELEMETRY_SA }}",
+    });
   });
 
   it("el token de la App se pide después del worker y solo puede escribir contenido y PR", () => {
@@ -144,6 +153,55 @@ describe("forma del workflow del worker", () => {
     }
     expect(commit).toContain("core.hooksPath=/dev/null");
     expect(paso("Rama y PR").run).toContain("core.hooksPath=/dev/null");
+  });
+
+  it("la telemetría solo corre si el repositorio la tiene configurada, y antes del worker", () => {
+    expect(JOB.env.TELEMETRIA).toBe("${{ vars.GCP_WIF_PROVIDER != '' && vars.GCP_TELEMETRY_SA != '' }}");
+    const auth = PASOS.findIndex((p) => p.uses?.startsWith("google-github-actions/auth@"));
+    const pasos = [PASOS[auth], paso("Arrancar el Collector"), paso("Configuración gestionada")];
+    for (const p of pasos) expect(p?.if).toBe("env.TELEMETRIA == 'true'");
+    expect(auth).toBeLessThan(indice("Arrancar el Collector"));
+    expect(indice("Arrancar el Collector")).toBeLessThan(indice("Configuración gestionada"));
+    expect(indice("Configuración gestionada")).toBeLessThan(indice("Worker"));
+  });
+
+  it("el Collector usa la configuración del checkout y la imagen fija de Google", () => {
+    expect(JOB.env.COLLECTOR_IMAGE).toMatch(/^us-docker\.pkg\.dev\/cloud-ops-agents-artifacts\/google-cloud-opentelemetry-collector\/otelcol-google:\d+\.\d+\.\d+$/);
+    const arranque = paso("Arrancar el Collector").run ?? "";
+    expect(arranque).toContain('-v "$PWD/.github/telemetria/collector.yaml:/etc/otelcol/config.yaml:ro"');
+    expect(arranque).toContain("-p 4317:4317");
+    expect(paso("Arrancar el Collector")["working-directory"]).toBeUndefined();
+    expect(existsSync(join(RAIZ, ".github", "telemetria", "collector.yaml"))).toBe(true);
+  });
+
+  it("las variables del exportador van en la configuración gestionada, sin el texto de prompts ni respuestas", () => {
+    const gestionada = paso("Configuración gestionada");
+    expect(gestionada["working-directory"]).toBeUndefined();
+    expect(gestionada.run).toContain("sudo tee /etc/claude-code/managed-settings.json");
+    expect(gestionada.run).toContain(".github/telemetria/managed-settings.json");
+    const ajustes = JSON.parse(readFileSync(join(RAIZ, ".github", "telemetria", "managed-settings.json"), "utf8")) as { env: Record<string, string> };
+    expect(ajustes.env).toMatchObject({
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4317",
+      OTEL_LOG_USER_PROMPTS: "0",
+      OTEL_LOG_ASSISTANT_RESPONSES: "0",
+      OTEL_LOG_TOOL_DETAILS: "0",
+    });
+  });
+
+  it("al modelo se le quitan las variables para pedir tokens de OIDC y las credenciales de GCP", () => {
+    const orden = paso("Worker").run ?? "";
+    const quitar = orden.indexOf("unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL GOOGLE_APPLICATION_CREDENTIALS");
+    expect(quitar).toBeGreaterThanOrEqual(0);
+    expect(quitar).toBeLessThan(orden.indexOf("claude -p"));
+    expect(orden).toContain("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE GOOGLE_GHA_CREDS_PATH");
+  });
+
+  it("para el Collector siempre, antes de eliminar el worktree", () => {
+    expect(paso("Parar el Collector").if).toBe("always()");
+    expect(paso("Parar el Collector").run).toContain("docker stop -t 30 otel");
+    expect(indice("Parar el Collector")).toBeGreaterThan(indice("Rama y PR"));
+    expect(indice("Parar el Collector")).toBeLessThan(indice("Eliminar el worktree"));
   });
 
   it("elimina el worktree y escribe el resumen siempre, al final", () => {
