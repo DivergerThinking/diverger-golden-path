@@ -26,6 +26,9 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # EN-OPS-04: CODEOWNERS sigue cubriendo .diverger/settings.json y a sí mismo.
+      - name: CODEOWNERS de la configuración
+        run: node scripts/codeowners.mjs
       - name: Generar tipos desde los contratos
         run: npm run gen
       - name: Lint
