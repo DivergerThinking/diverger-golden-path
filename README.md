@@ -80,10 +80,14 @@ Hace falta OpenTofu 1.12 o posterior (`winget install OpenTofu.Tofu` en Windows)
 
 ```sh
 cd infra
-tofu init -backend-config=staging.gcs.tfbackend
-tofu plan -var-file=staging.tfvars
-tofu apply -var-file=staging.tfvars
+tofu init "-backend-config=staging.gcs.tfbackend"
+tofu plan "-var-file=staging.tfvars"
+tofu apply "-var-file=staging.tfvars"
 ```
+
+Las comillas hacen falta en PowerShell: sin ellas parte por el punto un argumento que empieza por `-`, y `tofu init` pide el bucket a mano. En bash no cambian nada.
+
+`infra/.terraform.lock.hcl` fija las sumas del proveedor y se versiona: así todos aplican con el mismo proveedor. `tofu init -upgrade` lo actualiza cuando se sube la versión en `versions.tf`.
 
 Al terminar, `tofu output` da la URL del servicio, la ruta del repositorio de imágenes y el nombre de la base.
 
@@ -92,8 +96,8 @@ Al terminar, `tofu output` da la URL del servicio, la ruta del repositorio de im
 Un cambio hecho a mano (en la consola o con gcloud) es deriva: el servicio ya no es lo que dice el código. `tofu plan -detailed-exitcode` la enseña y termina con el código 2; con el código 0 no hay ninguna. `tofu apply` la revierte al estado descrito en `infra/`.
 
 ```sh
-tofu plan -var-file=staging.tfvars -detailed-exitcode
-tofu apply -var-file=staging.tfvars
+tofu plan "-var-file=staging.tfvars" -detailed-exitcode
+tofu apply "-var-file=staging.tfvars"
 ```
 
 Solo la imagen y la revisión del servicio, que cambia el despliegue, quedan fuera de esa comprobación.
