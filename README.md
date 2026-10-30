@@ -21,6 +21,11 @@ npm ci
 npm run check
 ```
 
+Después, una persona administradora del repositorio:
+
+1. Cambia `@joselcs` por el titular de la aplicación en `.github/CODEOWNERS`.
+2. Aplica el ruleset `codeowners` con el script del harness: `infra/github/aplicar-ruleset.sh <propietario>/<aplicacion>`. Una plantilla de GitHub copia los ficheros, pero no las reglas de la rama. Con el plan Free, solo funciona si el repositorio es público.
+
 ## Estructura
 
 ```
@@ -42,6 +47,7 @@ El contexto `ejemplo` solo sirve para que todo funcione desde el primer momento:
 - **El contrato manda en los datos.** Los tipos salen de OpenAPI con `npm run gen`; no se escriben a mano.
 - **Todo pasa el lint y los tipos** con TypeScript estricto.
 - **Cada commit de un agente dice quién lo hizo.** Lleva los trailers `Diverger-Rol`, `Diverger-Modelo` y `Diverger-Tarea`. El job del worker los añade con el hook de `scripts/git-hooks/` (`git config core.hooksPath scripts/git-hooks` y las variables `DIVERGER_ROL`, `DIVERGER_MODELO` y `DIVERGER_TAREA`). El job `trailers` falla con «Falta el trailer de tarea» si un commit de agente no los lleva. Es de agente si lleva algún trailer de Diverger o un `Co-Authored-By` de Claude. Los commits de personas no los necesitan.
+- **La configuración del harness tiene dueño.** `.github/CODEOWNERS` hace al titular propietario de `.diverger/settings.json` (el modo de autonomía, entre otras cosas) y del propio CODEOWNERS. `node scripts/codeowners.mjs` falla si dejan de estar cubiertos, por ejemplo con una regla posterior sin propietarios. Con el ruleset `codeowners`, ni un agente ni nadie con escritura los cambia sin la aprobación del titular, también en modo yolo.
 - **Seguridad en cada PR**, los cuatro análisis del diseño del harness:
   - código fuente (SAST) con CodeQL (`codeql.yml`);
   - dependencias con vulnerabilidades conocidas (SCA) con `npm audit` (`ci.yml`);
