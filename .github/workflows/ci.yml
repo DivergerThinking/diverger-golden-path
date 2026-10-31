@@ -258,8 +258,9 @@ jobs:
           gcloud run services describe "$APLICACION" --project "$PROYECTO" --region "$REGION" --format export \
             > "$RUNNER_TEMP/despliegue/service.yaml"
           # Solo cambia la imagen. Sin el nombre de la revisión, Cloud Run crea una nueva; sin el
-          # espacio de nombres, Cloud Deploy usa el proyecto de su destino.
-          IMAGEN="$IMAGEN" yq -i 'del(.metadata.namespace) | del(.spec.template.metadata.name) | .spec.template.spec.containers[0].image = strenv(IMAGEN)' \
+          # espacio de nombres, Cloud Deploy usa el proyecto de su destino; sin el tráfico, que
+          # Cloud Deploy fija en la revisión que despliega, no se hereda el de un despliegue fallido.
+          IMAGEN="$IMAGEN" yq -i 'del(.metadata.namespace) | del(.spec.template.metadata.name) | del(.spec.traffic) | .spec.template.spec.containers[0].image = strenv(IMAGEN)' \
             "$RUNNER_TEMP/despliegue/service.yaml"
           cat "$RUNNER_TEMP/despliegue/service.yaml"
       - name: Desplegar con Cloud Deploy

@@ -89,6 +89,8 @@ describe("despliegue en staging", () => {
     expect(cambios).toEqual([
       "del(.metadata.namespace)",
       "del(.spec.template.metadata.name)",
+      // Cloud Deploy fija el tráfico en su revisión: tras un fallo quedaría en la revisión rota.
+      "del(.spec.traffic)",
       ".spec.template.spec.containers[0].image = strenv(IMAGEN)",
     ]);
     expect(despliegue).toContain('--from-run-manifest "$RUNNER_TEMP/despliegue/service.yaml"');
