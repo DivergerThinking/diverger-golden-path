@@ -55,13 +55,20 @@ resource "google_cloud_run_v2_service" "aplicacion" {
   # Lo único que la infraestructura deja cambiar fuera de ella: la imagen y la revisión, que son
   # del despliegue continuo (gcloud run deploy --image), y los campos con los que gcloud dice qué
   # cliente hizo el cambio. Cualquier otro cambio a mano aparece en tofu plan y se revierte al
-  # aplicar (criterio negativo de EN-GP-03).
+  # aplicar (criterio negativo de EN-GP-03). Tampoco las etiquetas que Cloud Deploy pone en cada
+  # revisión (decisión 4 del ADR 0015 del harness); otra etiqueta puesta a mano sí es deriva.
   lifecycle {
     ignore_changes = [
       template[0].containers[0].image,
       template[0].revision,
       client,
       client_version,
+      template[0].labels["delivery-pipeline-id"],
+      template[0].labels["location"],
+      template[0].labels["managed-by"],
+      template[0].labels["project-id"],
+      template[0].labels["release-id"],
+      template[0].labels["target-id"],
     ]
   }
 
