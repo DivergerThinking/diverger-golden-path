@@ -181,4 +181,4 @@ Para volver a desplegar `main` sin un commit nuevo: *Actions → ci → Run work
 
 
 
-El servidor necesita la variable `GOOGLE_CLIENT_ID`, el ID de un cliente OAuth de tipo «Aplicación web» de Google Cloud, con la URL de la aplicación entre los orígenes de JavaScript autorizados. El frontend lo pide a `/api/config`, así que la misma imagen sirve en cualquier entorno. Cada petición a `/api` lleva el token en `Authorization: Bearer <token>`. Solo `/api/salud` y `/api/config` son públicas.
+El servidor necesita la variable `GOOGLE_CLIENT_ID`, el ID de un cliente OAuth de tipo «Aplicación web» de Google Cloud, con la URL de la aplicación entre los orígenes de JavaScript autorizados. El frontend lo pide a `/api/config`, así que la misma imagen sirve en cualquier entorno. Cada petición a `/api` lleva el token en `Authorization: Bearer <token>`. Solo `/api/salud` y `/api/config` son públicas. Sin `GOOGLE_CLIENT_ID` la aplicación arranca igual, con el inicio de sesión cerrado: el resto de `/api` responde 503 «Inicio de sesión sin configurar.» y el frontend lo muestra. Así se puede desplegar antes de crear el cliente OAuth.

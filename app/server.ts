@@ -6,7 +6,7 @@ import { tokenDeCabecera, type VerificarToken } from "../lib/auth.js";
 import { contextos } from "./contextos.js";
 
 export interface Opciones {
-  /** ID de cliente OAuth de Google; lo usa el frontend para pedir el token. */
+  /** ID de cliente OAuth de Google; lo usa el frontend para pedir el token. Vacío, nadie inicia sesión. */
   googleClientId: string;
   verificarToken: VerificarToken;
   /** Carpeta del frontend construido; sin ella solo se sirve la API. */
@@ -24,6 +24,9 @@ export async function crearServidor(opciones: Opciones): Promise<FastifyInstance
   app.addHook("onRequest", async (request, reply) => {
     const ruta = request.url.split("?")[0] ?? "";
     if (!ruta.startsWith("/api/") || PUBLICAS.has(ruta)) return;
+    if (!opciones.googleClientId) {
+      return reply.code(503).send({ error: "Inicio de sesión sin configurar." });
+    }
     const token = tokenDeCabecera(request.headers.authorization);
     const persona = token ? await opciones.verificarToken(token) : null;
     if (!persona) {

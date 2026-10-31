@@ -28,6 +28,14 @@ describe("App", () => {
     expect(fetch).toHaveBeenCalledWith("/api/yo", { headers: { authorization: "Bearer token-bueno" } });
   });
 
+  it("avisa, sin botón de Google, cuando el inicio de sesión no está configurado", async () => {
+    vi.stubGlobal("fetch", () => Promise.resolve(respuesta({ googleClientId: "" })));
+    const boton = vi.fn<BotonDeGoogle>(() => Promise.resolve());
+    render(<App botonDeGoogle={boton} />);
+    expect((await screen.findByRole("alert")).textContent).toBe("Inicio de sesión sin configurar.");
+    expect(boton).not.toHaveBeenCalled();
+  });
+
   it("avisa cuando el servidor no acepta el token", async () => {
     vi.stubGlobal("fetch", (url: string) =>
       Promise.resolve(url === "/api/config" ? respuesta({ googleClientId: "cliente" }) : respuesta({ error: "Inicia sesión con Google." }, 401)),
