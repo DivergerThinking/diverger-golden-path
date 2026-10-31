@@ -27,6 +27,7 @@ export function App({ botonDeGoogle }: AppProps) {
     const iniciar = async () => {
       const respuesta = await fetch("/api/config");
       const { googleClientId } = (await respuesta.json()) as { googleClientId: string };
+      if (!googleClientId) throw new Error("Inicio de sesión sin configurar.");
       await botonDeGoogle(elemento, googleClientId, (token) => {
         entrar(token).catch((motivo: unknown) => {
           setError(motivo instanceof Error ? motivo.message : String(motivo));

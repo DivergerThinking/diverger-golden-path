@@ -34,6 +34,15 @@ describe("servidor", () => {
     expect(malo.json()).toEqual({ error: "Inicia sesión con Google." });
   });
 
+  it("sin ID de cliente arranca y cierra la API con 503", async () => {
+    app = await crearServidor({ googleClientId: "", verificarToken });
+    expect((await app.inject("/api/salud")).statusCode).toBe(200);
+    expect((await app.inject("/api/config")).json()).toEqual({ googleClientId: "" });
+    const conToken = await app.inject({ url: "/api/yo", headers: { authorization: "Bearer token-bueno" } });
+    expect(conToken.statusCode).toBe(503);
+    expect(conToken.json()).toEqual({ error: "Inicio de sesión sin configurar." });
+  });
+
   it("identifica a la persona y sirve las rutas de los contextos", async () => {
     app = await crearServidor({ googleClientId: "cliente", verificarToken });
     const headers = { authorization: "Bearer token-bueno" };
