@@ -1,6 +1,7 @@
 // Bucle desatendido (HU-EJE-01, ADR 0016 del harness): lo que se puede comprobar del workflow sin
 // GitHub. Que se lanza a mano, descarga el núcleo con un token de solo lectura, lanza los workers con
-// un token limitado a Actions y lectura, no ejecuta ningún modelo y no tiene credenciales de GCP.
+// un token limitado a Actions y lectura, no ejecuta ningún modelo y, de GCP, solo usa la cuenta de
+// telemetría al terminar para registrar el resultado (EN-TEL-02, ADR 0017 del harness).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -49,10 +50,30 @@ describe("workflow del bucle desatendido", () => {
     expect(WF.concurrency).toEqual({ group: "diverger-bucle-${{ inputs.initiative }}", "cancel-in-progress": false });
   });
 
-  it("el token del job es de solo lectura y no hay id-token ni nada de GCP", () => {
+  it("el token del job es de solo lectura y GCP solo con la cuenta de telemetría", () => {
     expect(WF.permissions).toEqual({ contents: "read" });
-    expect(JOB.permissions).toBeUndefined();
-    expect(SIN_COMENTARIOS).not.toMatch(/id-token|GCP_|gcloud|google-github-actions|environment:/);
+    expect(JOB.permissions).toEqual({ contents: "read", "id-token": "write" });
+    expect(SIN_COMENTARIOS).not.toMatch(/GCP_DEPLOY_SA|environment:/);
+    const auth = PASOS.filter((p) => p.uses?.startsWith("google-github-actions/auth@"));
+    expect(auth).toHaveLength(1);
+    expect(auth[0]?.with).toEqual({ workload_identity_provider: "${{ vars.GCP_WIF_PROVIDER }}",
+      service_account: "${{ vars.GCP_TELEMETRY_SA }}" });
+  });
+
+  it("registra el resultado después del bucle, sin fallar el job si no puede", () => {
+    const nombres = PASOS.map((p) => p.name ?? p.uses ?? "");
+    const bucle = nombres.indexOf("Bucle");
+    const auth = nombres.findIndex((n) => n.startsWith("google-github-actions/auth@"));
+    const registro = nombres.indexOf("Registrar el resultado");
+    expect(bucle).toBeLessThan(auth);
+    expect(auth).toBeLessThan(registro);
+    expect(paso("Bucle").run).toContain('--results "$RUNNER_TEMP/resultados.jsonl"');
+    const registrar = PASOS[registro] as Paso & { if?: string; "continue-on-error"?: boolean };
+    expect(registrar.if).toBe("always() && env.TELEMETRIA == 'true'");
+    expect(registrar["continue-on-error"]).toBe(true);
+    expect(registrar.run).toContain("gcloud logging write diverger-ejecucion \"$linea\" --payload-type=json");
+    // gcloud solo escribe ese log: nada de despliegues ni de lecturas de GCP.
+    expect(SIN_COMENTARIOS.match(/gcloud [a-z-]+ [a-z-]+/g)).toEqual(["gcloud logging write"]);
   });
 
   it("no ejecuta ningún modelo", () => {
