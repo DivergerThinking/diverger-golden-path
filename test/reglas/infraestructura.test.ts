@@ -63,17 +63,19 @@ describe("infraestructura como código", () => {
   });
 
   // Criterio negativo de EN-GP-03: un cambio a mano en el servicio aparece en el plan y se
-  // revierte. Solo la imagen y la revisión, que son del despliegue continuo, y los campos con los
-  // que gcloud firma el cambio quedan fuera, y las etiquetas con las que Cloud Deploy marca cada
-  // revisión, una a una. Ignorar algo más dejaría pasar la deriva.
-  it("solo deja fuera de la deriva la imagen, la revisión, el cliente y las etiquetas de Cloud Deploy", () => {
+  // revierte. Solo la imagen, que es del despliegue continuo, y los campos con los que gcloud firma
+  // el cambio quedan fuera, y las etiquetas con las que Cloud Deploy marca cada revisión, una a una.
+  // Ignorar algo más dejaría pasar la deriva. El nombre de la revisión no: ignorarlo hacía que
+  // cualquier cambio del template fallara con 409 (#25).
+  it("solo deja fuera de la deriva la imagen, el cliente y las etiquetas de Cloud Deploy", () => {
     const bloque = /ignore_changes\s*=\s*\[([\s\S]*?)\n\s*\]/.exec(leer("infra/cloud_run.tf"));
     const ignorados = (bloque?.[1] ?? "")
       .split(",")
       .map((campo) => campo.trim())
       .filter(Boolean);
     const etiquetas = ["delivery-pipeline-id", "location", "managed-by", "project-id", "release-id", "target-id"];
-    const esperados = ["client", "client_version", "template[0].containers[0].image", "template[0].revision"];
+    const esperados = ["client", "client_version", "template[0].containers[0].image"];
+    expect(ignorados).not.toContain("template[0].revision");
     esperados.push(...etiquetas.map((etiqueta) => `template[0].labels["${etiqueta}"]`));
     expect(ignorados.sort()).toEqual(esperados.sort());
     expect(tf.match(/ignore_changes/g)).toHaveLength(1);

@@ -52,15 +52,16 @@ resource "google_cloud_run_v2_service" "aplicacion" {
     }
   }
 
-  # Lo único que la infraestructura deja cambiar fuera de ella: la imagen y la revisión, que son
-  # del despliegue continuo (gcloud run deploy --image), y los campos con los que gcloud dice qué
-  # cliente hizo el cambio. Cualquier otro cambio a mano aparece en tofu plan y se revierte al
+  # Lo único que la infraestructura deja cambiar fuera de ella: la imagen, que es del despliegue
+  # continuo, y los campos con los que gcloud dice qué cliente hizo el cambio. El nombre de la
+  # revisión no se ignora: el proveedor lo reenviaría en cada cambio y Cloud Run lo rechaza con 409
+  # porque ya existe con otra configuración (#25). Así OpenTofu no manda nombre y Cloud Run genera
+  # uno; tras cada despliegue de Cloud Deploy, el plan enseña que el nombre vuelve a quedar vacío. Cualquier otro cambio a mano aparece en tofu plan y se revierte al
   # aplicar (criterio negativo de EN-GP-03). Tampoco las etiquetas que Cloud Deploy pone en cada
   # revisión (decisión 4 del ADR 0015 del harness); otra etiqueta puesta a mano sí es deriva.
   lifecycle {
     ignore_changes = [
       template[0].containers[0].image,
-      template[0].revision,
       client,
       client_version,
       template[0].labels["delivery-pipeline-id"],
