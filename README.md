@@ -34,7 +34,7 @@ spec/contextos/<id>/api.openapi.json   contrato de cada bounded context
 src/<id>/index.ts                      interfaz pública del contexto: lo único que importan los demás
 src/<id>/api.gen.ts                    tipos generados del contrato (npm run gen; no se versionan)
 src/<id>/...                           lógica interna del contexto
-lib/                                   código común sin negocio (por ejemplo, el inicio de sesión)
+lib/                                   código común sin negocio: el inicio de sesión y el puerto de datos (datos.ts, firestore.ts)
 app/                                   servidor: arranque, autenticación y registro de los contextos
 web/                                   frontend en React
 infra/                                 infraestructura como código de la aplicación en GCP
@@ -67,6 +67,31 @@ gh workflow run diverger-bucle.yml -f initiative=<iniciativa> [-f max-workers=1]
 Es un programa sin modelo, `bucle.py` del núcleo, que el job descarga del harness con un token de la GitHub App de solo lectura. En cada vuelta actualiza la rama base, mira el job y la PR de cada worker y lanza `diverger-worker.yml` para las siguientes tareas listas, de una en una por defecto. Se para cuando todas las tareas están hechas, una falla tres veces, se agota el presupuesto de pasos o una espera su test de aceptación; el resumen del job dice por qué. Si se relanza, reanuda sin repetir lo hecho. `restart` levanta una parada por bloqueo o por presupuesto.
 
 Necesita la GitHub App `diverger-harness` instalada en este repositorio (Actions: escritura, Contents y Pull requests: lectura) y en el harness (Contents: lectura), con las variables `DIVERGER_HARNESS_APP_ID` y el secreto `DIVERGER_HARNESS_APP_KEY`. La variable `DIVERGER_HARNESS_REF` fija la versión del núcleo (por defecto, `main`).
+
+## Datos: el puerto de persistencia
+
+Los contextos guardan y leen sus datos solo a través del puerto de `lib/datos.ts` (HU-GP-01). El servidor se lo pasa a cada contexto al registrarlo, en las opciones de su plugin:
+
+```ts
+import type { FastifyPluginAsync } from "fastify";
+import type { OpcionesContexto } from "../../lib/datos.js";
+
+export const rutas: FastifyPluginAsync<OpcionesContexto> = (app, { almacen }) => {
+  app.post("/api/equipos/:id/prestamo", (request) =>
+    almacen.transaccion(async (tx) => {
+      const equipo = await tx.obtener<Equipo>("prestamos_equipos", request.params.id);
+      // ... comprobar y guardar con tx.guardar(...): todo o nada, también con dos peticiones a la vez.
+    }),
+  );
+  return Promise.resolve();
+};
+```
+
+- **Operaciones:** `obtener`, `guardar`, `listar`, `borrar` y `transaccion`. La transacción es atómica: si otra cambia lo que ha leído, se repite.
+- **Colecciones:** cada contexto usa las suyas, con su id delante (`prestamos_equipos`).
+- **Adaptadores:** `lib/firestore.ts` usa la base de `FIRESTORE_DATABASE`. Sin esa variable, el servidor usa el almacén en memoria y lo avisa. En los tests se usa `almacenEnMemoria()`.
+- **Regla:** `dependency-cruiser` impide que `src/`, `app/` o `web/` importen el cliente de la base (`datos-solo-por-el-puerto`).
+- **Otro golden path,** con otra base, cambia solo el adaptador: los contextos no lo notan.
 
 ## Worker de cada tarea
 
