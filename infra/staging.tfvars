@@ -17,5 +17,7 @@ proteccion_borrado = false
 # proyecto de pruebas, el mismo para todas las aplicaciones de staging. No es un secreto. Sin él, la
 # API protegida responde 503, y el validador en staging, que pide un token de identidad con esta
 # audiencia, no puede entrar (EN-FM-03, ADR 0020 del harness). El cliente se crea en la consola de
-# Google Cloud (APIs y servicios > Credenciales); PENDIENTE se cambia por su ID antes de integrar.
-google_client_id = "PENDIENTE.apps.googleusercontent.com"
+# Google Cloud (Google Auth Platform > Clientes), con audiencia interna. Cada aplicación de staging
+# añade su URL a los orígenes autorizados de JavaScript del cliente; sin ella, el botón de inicio de
+# sesión no funciona en el navegador (el validador no lo necesita).
+google_client_id = "856958240211-9odcnq6f4roe1er15rijo624ht8ekjmd.apps.googleusercontent.com"
