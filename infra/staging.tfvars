@@ -12,3 +12,10 @@ almacen_cloud_deploy = "gs://diverger-exp-harness-clouddeploy"
 
 # Las aplicaciones de prueba se crean y se tiran en cada ejecución del nivel 0 y del nivel 1.
 proteccion_borrado = false
+
+# Inicio de sesión con Google (ADR 0004 del harness): el ID del cliente OAuth «Aplicación web» del
+# proyecto de pruebas, el mismo para todas las aplicaciones de staging. No es un secreto. Sin él, la
+# API protegida responde 503, y el validador en staging, que pide un token de identidad con esta
+# audiencia, no puede entrar (EN-FM-03, ADR 0020 del harness). El cliente se crea en la consola de
+# Google Cloud (APIs y servicios > Credenciales); PENDIENTE se cambia por su ID antes de integrar.
+google_client_id = "PENDIENTE.apps.googleusercontent.com"
