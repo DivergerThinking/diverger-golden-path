@@ -108,6 +108,13 @@ describe("despliegue en staging", () => {
       expect(staging).toMatch(new RegExp(`^${dato}\\s*=\\s*"[^"]+"$`, "m"));
     }
   });
+
+  // EN-FM-03, ADR 0020 del harness: sin GOOGLE_CLIENT_ID la API protegida responde 503 a todos, y el
+  // validador en staging pide su token de identidad con esa audiencia.
+  it("staging tiene el ID del cliente OAuth de Google", () => {
+    const staging = leer("infra/staging.tfvars");
+    expect(staging).toMatch(/^google_client_id\s*=\s*"\d+-[a-z0-9]+\.apps\.googleusercontent\.com"$/m);
+  });
 });
 
 // RQ.034: ningún agente tiene credenciales de despliegue. Un worker corre en su propio job y puede
