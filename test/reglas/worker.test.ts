@@ -2,12 +2,15 @@
 // workflow sin GitHub. Primero su forma (lanzamiento, permisos, topes, orden de los pasos) y después
 // los pasos que no necesitan GitHub ni a Claude, ejecutados con bash sobre un repositorio de juguete.
 // Los que usan jq se saltan donde no está (en el runner del CI sí está).
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { arrancar, lanzadoPorElBucle, PERSONAS, REPO, type Datos } from "./github-falso.js";
 
 const RAIZ = join(import.meta.dirname, "..", "..");
 const TEXTO = readFileSync(join(RAIZ, ".github", "workflows", "diverger-worker.yml"), "utf8");
@@ -62,10 +65,10 @@ describe("forma del workflow del worker", () => {
     expect(WF["run-name"]).toBe("diverger-worker ${{ inputs.task }} ${{ inputs.run }}");
   });
 
-  it("el token del job solo lee el contenido; id-token solo en el job, para la telemetría", () => {
+  it("el token del job solo lee el contenido y las ejecuciones; id-token solo en el job, para la telemetría", () => {
     expect(WF.permissions).toEqual({ contents: "read" });
     expect(Object.keys(WF.jobs)).toEqual(["worker"]);
-    expect(JOB.permissions).toEqual({ contents: "read", "id-token": "write" });
+    expect(JOB.permissions).toEqual({ contents: "read", actions: "read", "id-token": "write" });
   });
 
   it("no tiene credenciales de despliegue: solo la clave de Anthropic, la de la App y la cuenta de telemetría", () => {
@@ -205,6 +208,17 @@ describe("forma del workflow del worker", () => {
     }
     expect(commit).toContain("core.hooksPath=/dev/null");
     expect(paso("Rama y PR").run).toContain("core.hooksPath=/dev/null");
+  });
+
+  it("quien lanzó la ejecución sale de GitHub con el script de la rama base, no de github.actor ni del modelo (EN-OPS-06)", () => {
+    const commit = paso("Commit con los trailers");
+    expect(commit.run).toContain('node "$GITHUB_WORKSPACE/scripts/lanzador.mjs" "$GITHUB_RUN_ID" "$INICIATIVA"');
+    expect(commit.run).toContain('--trailer "Co-authored-by: $LANZADO_POR_NOMBRE <$LANZADO_POR_ID+$LANZADO_POR@users.noreply.github.com>"');
+    expect(commit.run).toContain('echo "LANZADO_POR=$LANZADO_POR" >> "$GITHUB_ENV"');
+    // El bucle lanza el worker con la identidad del harness: github.actor sería diverger-harness[bot].
+    expect(SIN_COMENTARIOS).not.toContain("github.actor");
+    expect(paso("Rama y PR").env?.LANZADO_POR).toBeUndefined();
+    expect(paso("Rama y PR").run).toContain("Lanzado por @$LANZADO_POR. Job del worker: $GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID");
   });
 
   it("la telemetría solo corre si el repositorio la tiene configurada, y antes del worker", () => {
@@ -559,5 +573,79 @@ echo "{\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"num_turns\\":3,\\"tot
     expect(rojo.codigo).toBe(1);
     expect(readFileSync(join(temp, "comprobaciones"), "utf8").trim()).toBe("rojo");
     expect(existsSync(join(temp, "comprobaciones-2.log"))).toBe(true);
+  });
+});
+
+// El paso del commit, con la API de GitHub de mentira y un gh de mentira (EN-OPS-06): el commit dice
+// quién lanzó la ejecución, que es quien lanzó el bucle, y el CI de la PR lo acepta.
+describe.skipIf(!HAY_JQ)("commit del worker con quien lo lanzó", () => {
+  let servidor: Server | undefined;
+  let worktree = "";
+
+  async function commitDelWorker(datos: Datos): Promise<{ codigo: number; motivo: string }> {
+    const api = await arrancar(datos);
+    servidor = api.servidor;
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    // gh de mentira: solo el id de la App, que pide el paso con gh api users/<app>[bot].
+    writeFileSync(join(bin, "gh"), "#!/usr/bin/env bash\necho 350234409\n", { mode: 0o755 });
+    let codigo = 0;
+    try {
+      await promisify(execFile)("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", paso("Commit con los trailers").run ?? ""], {
+        cwd: worktree,
+        env: { ...process.env, ...entorno, PATH: `${bin}:${process.env.PATH ?? ""}`, APP: "diverger-harness", GITHUB_RUN_ID: "900",
+          GITHUB_REPOSITORY: REPO, GITHUB_API_URL: api.url, GH_TOKEN: "token-de-prueba" },
+      });
+    } catch (error) {
+      codigo = (error as { code: number }).code;
+    }
+    const motivo = existsSync(join(temp, "motivo")) ? readFileSync(join(temp, "motivo"), "utf8").trim() : "";
+    return { codigo, motivo };
+  }
+
+  beforeEach(() => {
+    worktree = join(dir, "wt");
+    mkdirSync(worktree);
+    // El script sale del checkout de la rama base ($GITHUB_WORKSPACE), no del worktree del modelo.
+    escribir(dir, "scripts/lanzador.mjs", readFileSync(join(RAIZ, "scripts", "lanzador.mjs"), "utf8"));
+    Object.assign(entorno, { INICIATIVA: "prestamos", TAREA: "TA-004", MODELO: "claude-sonnet-5-5",
+      FICHERO_TAREA: ".diverger/prestamos/tasks/TA-004.json", WORKTREE: worktree });
+    for (const args of [["init", "-q", "-b", "main"], ["config", "user.name", "Prueba"], ["config", "user.email", "prueba@example.com"],
+      ["config", "commit.gpgsign", "false"]]) spawnSync("git", args, { cwd: worktree });
+    escribir(worktree, ".diverger/prestamos/tasks/TA-004.json", { ...TAREA_PENDIENTE, id: "TA-004", title: "Prestar un equipo", status: "done" });
+    spawnSync("git", ["add", "-A"], { cwd: worktree });
+  });
+
+  afterEach(() => {
+    servidor?.close();
+    servidor = undefined;
+  });
+
+  it("lleva Diverger-Iniciado-por y Co-authored-by de quien lanzó el bucle, y el CI de la PR lo acepta", async () => {
+    expect(await commitDelWorker({ ejecuciones: lanzadoPorElBucle("joselcs"), usuarios: PERSONAS })).toEqual({ codigo: 0, motivo: "" });
+    const mensaje = spawnSync("git", ["log", "-1", "--format=%an%n%B"], { cwd: worktree, encoding: "utf8" }).stdout;
+    expect(mensaje).toContain("diverger-harness[bot]\nfeat: TA-004 Prestar un equipo");
+    for (const trailer of ["Diverger-Rol: Desarrollador", "Diverger-Modelo: claude-sonnet-5-5", "Diverger-Tarea: TA-004",
+      "Diverger-Iniciado-por: joselcs", "Co-authored-by: José Luis Calvo <1234567+joselcs@users.noreply.github.com>"]) {
+      expect(mensaje).toContain(trailer);
+    }
+    expect(readFileSync(valor("GITHUB_ENV"), "utf8")).toContain("LANZADO_POR=joselcs\n");
+    // El CI de la PR, con la descripción que escribe el paso «Rama y PR».
+    const api = await arrancar({ ejecuciones: lanzadoPorElBucle("joselcs"), usuarios: PERSONAS });
+    servidor?.close();
+    servidor = api.servidor;
+    const ci = await promisify(execFile)(process.execPath, [join(RAIZ, "scripts", "trailers.mjs"), "HEAD"], {
+      cwd: worktree,
+      env: { ...process.env, GITHUB_API_URL: api.url, GITHUB_REPOSITORY: REPO, GH_TOKEN: "token-de-prueba",
+        PR_CUERPO: `Lanzado por @joselcs. Job del worker: https://github.com/${REPO}/actions/runs/900`, PR_RAMA: "diverger/prestamos/TA-004" },
+    });
+    expect(ci.stderr).toBe("");
+  });
+
+  it("si no se sabe quién lanzó la ejecución, termina sin commit y dice por qué", async () => {
+    const r = await commitDelWorker({ ejecuciones: lanzadoPorElBucle("diverger-harness[bot]"), usuarios: PERSONAS });
+    expect(r.codigo).not.toBe(0);
+    expect(r.motivo).toContain("No se sabe quién lanzó la ejecución: La ejecución 800 la lanzó diverger-harness[bot], que no es una persona");
+    expect(spawnSync("git", ["rev-parse", "HEAD"], { cwd: worktree }).status).not.toBe(0);
   });
 });

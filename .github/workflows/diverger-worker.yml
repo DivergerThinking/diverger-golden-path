@@ -52,6 +52,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      actions: read # Solo para saber quién lanzó la ejecución (EN-OPS-06).
       id-token: write # Solo para la cuenta de telemetría (ADR 0007).
     env:
       INICIATIVA: ${{ inputs.initiative }}
@@ -264,11 +265,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           APP: ${{ steps.token.outputs.app-slug }}
-          LANZADO_POR: ${{ github.actor }}
-          LANZADO_POR_ID: ${{ github.actor_id }}
         run: |
           fallar() { printf '%s\n' "$1" > "$RUNNER_TEMP/motivo"; echo "::error::$1"; exit 1; }
           id=$(gh api "users/$APP%5Bbot%5D" -q .id) || fallar "No se encuentra el usuario de la App $APP"
+          # Quién lanzó la ejecución (EN-OPS-06): github.actor de este job o, si lo lanzó el bucle con la
+          # identidad del harness, el del bucle. Lo dice GitHub, no el modelo; el script es el de la rama base.
+          persona=$(node "$GITHUB_WORKSPACE/scripts/lanzador.mjs" "$GITHUB_RUN_ID" "$INICIATIVA" 2>"$RUNNER_TEMP/lanzador") \
+            || fallar "No se sabe quién lanzó la ejecución: $(cat "$RUNNER_TEMP/lanzador")"
+          LANZADO_POR=$(jq -r .login <<< "$persona")
+          LANZADO_POR_ID=$(jq -r .id <<< "$persona")
+          LANZADO_POR_NOMBRE=$(jq -r .nombre <<< "$persona")
+          echo "LANZADO_POR=$LANZADO_POR" >> "$GITHUB_ENV"
           titulo=$(jq -r .title "$FICHERO_TAREA")
           git -c core.hooksPath=/dev/null \
             -c user.name="$APP[bot]" -c user.email="$id+$APP[bot]@users.noreply.github.com" \
@@ -277,14 +284,13 @@ jobs:
             --trailer "Diverger-Modelo: $MODELO" \
             --trailer "Diverger-Tarea: $TAREA" \
             --trailer "Diverger-Iniciado-por: $LANZADO_POR" \
-            --trailer "Co-authored-by: $LANZADO_POR <$LANZADO_POR_ID+$LANZADO_POR@users.noreply.github.com>"
+            --trailer "Co-authored-by: $LANZADO_POR_NOMBRE <$LANZADO_POR_ID+$LANZADO_POR@users.noreply.github.com>"
           git log -1 --format=%B
 
       - name: Rama y PR
         working-directory: ${{ env.WORKTREE }}
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
-          LANZADO_POR: ${{ github.actor }}
         run: |
           fallar() { printf '%s\n' "$1" > "$RUNNER_TEMP/motivo"; echo "::error::$1"; exit 1; }
           repo="$GITHUB_REPOSITORY"
