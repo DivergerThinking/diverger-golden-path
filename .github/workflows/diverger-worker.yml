@@ -14,8 +14,8 @@ run-name: diverger-worker ${{ inputs.task }} ${{ inputs.run }}
 # Telemetría (ADR 0007 del harness): si el repositorio tiene GCP_WIF_PROVIDER y GCP_TELEMETRY_SA, el
 # job arranca un OpenTelemetry Collector en el runner con la cuenta diverger-telemetry, que solo
 # escribe logs y métricas. Para eso tiene id-token: write. En GCP, esa cuenta solo la aceptan este
-# workflow y worker-humo.yml, y la de despliegue solo el environment staging, que este job no usa: con
-# su token, el worker no puede desplegar.
+# workflow, worker-humo.yml y diverger-bucle.yml, y la de despliegue solo el environment staging, que
+# este job no usa: con su token, el worker no puede desplegar.
 #
 # El modelo construye la tarea con la skill implement de diverger-dev (EN-FM-02), sin Bash. Las
 # comprobaciones del proyecto (npm run check) las ejecuta el job en otro paso, sin la clave de Anthropic;
