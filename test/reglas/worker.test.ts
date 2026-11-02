@@ -14,6 +14,7 @@ const TEXTO = readFileSync(join(RAIZ, ".github", "workflows", "diverger-worker.y
 const SIN_COMENTARIOS = TEXTO.split("\n").filter((linea) => !linea.trimStart().startsWith("#")).join("\n");
 const SCRIPT_MODELO = join(RAIZ, ".github", "diverger", "worker-modelo.sh");
 const SCRIPT_COMPROBAR = join(RAIZ, ".github", "diverger", "worker-comprobar.sh");
+const SCRIPT_COSTE = join(RAIZ, ".github", "diverger", "worker-coste.sh");
 const MODELO_SH = readFileSync(SCRIPT_MODELO, "utf8");
 
 interface Paso {
@@ -51,11 +52,11 @@ function paso(nombre: string): Paso {
 }
 
 describe("forma del workflow del worker", () => {
-  it("se lanza solo con workflow_dispatch y las entradas initiative, task y run", () => {
+  it("se lanza solo con workflow_dispatch y las entradas initiative, task, max-usd y run", () => {
     expect(Object.keys(WF.on)).toEqual(["workflow_dispatch"]);
     const entradas = WF.on.workflow_dispatch.inputs;
-    expect(Object.keys(entradas)).toEqual(["initiative", "task", "run"]);
-    for (const entrada of Object.values(entradas)) expect(entrada).toMatchObject({ required: true, type: "string" });
+    expect(Object.keys(entradas)).toEqual(["initiative", "task", "max-usd", "run"]);
+    for (const entrada of Object.entries(entradas).filter(([nombre]) => nombre !== "max-usd").map(([, valor]) => valor)) expect(entrada).toMatchObject({ required: true, type: "string" });
   });
 
   it("el job se llama diverger-worker <task> <run>, para encontrarlo al conciliar", () => {
@@ -120,7 +121,7 @@ describe("forma del workflow del worker", () => {
 
   it("el modelo solo recibe la clave de Anthropic, ningún token de GitHub", () => {
     for (const nombre of ["Worker", "Worker, intento 2", "Worker, intento 3"]) {
-      expect(Object.keys(paso(nombre).env ?? {}).sort()).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]);
+      expect(Object.keys(paso(nombre).env ?? {}).filter((clave) => clave !== "GASTADO").sort()).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]);
       expect(paso(nombre).run).toMatch(/^bash "\$GITHUB_WORKSPACE\/\.github\/diverger\/worker-modelo\.sh" [123]$/);
     }
     for (const anterior of PASOS.slice(0, indice("Worker"))) {
@@ -163,13 +164,26 @@ describe("forma del workflow del worker", () => {
 
   it("tiene topes de turnos, de gasto y de tiempo por intento", () => {
     expect(MODELO_SH).toMatch(/--max-turns "\$MAX_TURNOS"/);
-    expect(MODELO_SH).toMatch(/--max-budget-usd "\$MAX_USD"/);
+    expect(MODELO_SH).toMatch(/--max-budget-usd "\$restante"/);
     expect(JOB.env.MAX_TURNOS).toBe("${{ vars.DIVERGER_WORKER_MAX_TURNS || '40' }}");
-    expect(JOB.env.MAX_USD).toBe("${{ vars.DIVERGER_WORKER_MAX_BUDGET_USD || '2.00' }}");
+    expect(JOB.env.MAX_USD).toBe("${{ inputs.max-usd || vars.DIVERGER_WORKER_MAX_BUDGET_USD || '10.00' }}");
     const pasosConTope = PASOS.filter((p) => p.name?.startsWith("Worker") || p.id?.startsWith("comprobaciones-"));
     const total = pasosConTope.reduce((suma, p) => suma + (p["timeout-minutes"] ?? Infinity), 0);
     expect(total).toBeLessThanOrEqual(3 * 35);
     expect(JOB["timeout-minutes"]).toBeLessThanOrEqual(60);
+  });
+
+  it("el coste del job sale de las salidas de los pasos del modelo y se sube siempre, también si falla (ADR 0024)", () => {
+    expect(paso("Worker, intento 2").env?.GASTADO).toBe("${{ steps.worker-1.outputs.coste }}");
+    expect(paso("Worker, intento 3").env?.GASTADO).toBe("${{ steps.worker-2.outputs.coste || steps.worker-1.outputs.coste }}");
+    expect(indice("Tope del job")).toBeLessThan(indice("Worker"));
+    const coste = paso("Coste del job");
+    expect(coste.if).toBe("always()");
+    expect(coste.run).toBe("bash .github/diverger/worker-coste.sh");
+    for (const n of [1, 2, 3]) expect(coste.env?.INTENTOS).toContain(`\${{ steps.worker-${n}.outcome }}:\${{ steps.worker-${n}.outputs.coste }}`);
+    const subida = PASOS[indice("Coste del job") + 1];
+    expect(subida?.uses).toMatch(/^actions\/upload-artifact@/);
+    expect(subida).toMatchObject({ if: "always()", with: { name: "diverger-coste", path: "${{ runner.temp }}/coste/coste.json" } });
   });
 
   it("instala una versión fija de Claude Code y fija las acciones por su commit", () => {
@@ -532,6 +546,52 @@ echo "{\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"num_turns\\":3,\\"tot
     expect(args[args.indexOf("--resume") + 1]).toBe("s-1");
     expect(args[1]).toContain("Las comprobaciones del proyecto (npm run check) han fallado después de tu intento 1");
     expect(args.join("\n")).toContain("FAIL src/prestamos/prestamos.test.ts > presta dos veces");
+  });
+
+  it("cada intento recibe lo que queda del tope del job y deja su coste en la salida del paso (ADR 0024)", () => {
+    writeFileSync(join(temp, "salida-1.json"), JSON.stringify({ session_id: "s-1" }));
+    writeFileSync(join(temp, "comprobaciones-1.log"), "FAIL\n");
+    const salidaPaso = join(temp, "github_output");
+    const r = script(SCRIPT_MODELO, "2", { TOPE_JOB: "10.00", GASTADO: "3.5", GITHUB_OUTPUT: salidaPaso });
+    expect(r.codigo).toBe(0);
+    const args = readFileSync(join(temp, "args-claude"), "utf8").split("\n");
+    expect(args[args.indexOf("--max-budget-usd") + 1]).toBe("6.50");
+    expect(readFileSync(salidaPaso, "utf8")).toBe("coste=0.2\n");
+  });
+
+  it("sin TOPE_JOB ni gasto anterior, el intento recibe MAX_USD entero", () => {
+    expect(script(SCRIPT_MODELO, "1").codigo).toBe(0);
+    const args = readFileSync(join(temp, "args-claude"), "utf8").split("\n");
+    expect(args[args.indexOf("--max-budget-usd") + 1]).toBe("2.00");
+  });
+
+  it("con menos de 0,50 USD de margen no lanza otro intento", () => {
+    const r = script(SCRIPT_MODELO, "3", { TOPE_JOB: "10.00", GASTADO: "9.6" });
+    expect(r.codigo).toBe(1);
+    expect(r.motivo).toBe("El worker ha gastado 9.6 USD de su tope de 10.00 USD: no queda margen para otro intento");
+    expect(existsSync(join(temp, "args-claude"))).toBe(false);
+  });
+
+  it.each([
+    ["el último coste, no la suma, porque la sesión reanudada ya lo incluye", "success:0.2 failure:0.5 skipped:", 0.5],
+    ["el de un solo intento", "success:1.25 skipped: skipped:", 1.25],
+    ["nada si un intento lanzado no dejó coste: el bucle cuenta el tope entero", "failure:0.4 failure: skipped:", undefined],
+    ["nada si no se lanzó ningún intento", "skipped: skipped: skipped:", undefined],
+  ])("coste.json lleva %s", (_caso, intentos, coste) => {
+    expect(script(SCRIPT_COSTE, "", { INTENTOS: intentos }).codigo).toBe(0);
+    const fichero = join(temp, "coste", "coste.json");
+    if (coste === undefined) expect(existsSync(fichero)).toBe(false);
+    else expect(JSON.parse(readFileSync(fichero, "utf8"))).toEqual({ costUsd: coste });
+  });
+
+  it.each([
+    ["el de max-usd si es menor que el techo", "3", { budget: { maxWorkerUsd: 5 } }, "3.00"],
+    ["el techo de settings.json si max-usd es mayor", "20", { budget: { maxWorkerUsd: 5 } }, "5.00"],
+    ["10 USD como techo si settings.json no lo fija", "20", undefined, "10.00"],
+  ])("el tope del job es %s", (_caso, maxUsd, ajustes, tope) => {
+    if (ajustes) escribir(repo, ".diverger/settings.json", ajustes);
+    expect(ejecutar("Tope del job", { MAX_USD: maxUsd }).codigo).toBe(0);
+    expect(readFileSync(valor("GITHUB_ENV"), "utf8")).toBe(`TOPE_JOB=${tope}\n`);
   });
 
   it("si la skill se para con BLOQUEADA, el worker falla con su motivo", () => {
