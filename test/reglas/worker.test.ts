@@ -124,7 +124,8 @@ describe("forma del workflow del worker", () => {
 
   it("el modelo solo recibe la clave de Anthropic, ningún token de GitHub", () => {
     for (const nombre of ["Worker", "Worker, intento 2", "Worker, intento 3"]) {
-      expect(Object.keys(paso(nombre).env ?? {}).filter((clave) => clave !== "GASTADO").sort()).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]);
+      expect(Object.keys(paso(nombre).env ?? {}).filter((clave) => clave !== "GASTADO").sort())
+        .toEqual(["ANTHROPIC_API_KEY", "BASH_ENV", "CLAUDE_BIN", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "ENV", "TOPE_JOB"]);
       expect(paso(nombre).run).toMatch(/^bash "\$GITHUB_WORKSPACE\/\.github\/diverger\/worker-modelo\.sh" [123]$/);
     }
     for (const anterior of PASOS.slice(0, indice("Worker"))) {
@@ -157,7 +158,7 @@ describe("forma del workflow del worker", () => {
     // Sin Bash ni herramientas de red: el modelo no ejecuta nada y solo sale a la API de Anthropic.
     const herramientas = /--tools "([^"]+)"/.exec(MODELO_SH)?.[1]?.split(",");
     expect(herramientas).toEqual(["Read", "Glob", "Grep", "Edit", "Write", "Skill"]);
-    const orden = MODELO_SH.slice(MODELO_SH.indexOf("claude -p"));
+    const orden = MODELO_SH.slice(MODELO_SH.indexOf('"$CLAUDE_BIN/claude" -p'));
     const bloque = orden.slice(orden.indexOf("--allowedTools"), orden.indexOf("--setting-sources"));
     const permitidas = [...bloque.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
     expect(permitidas).toEqual(["Read", "Glob", "Grep", "Skill(diverger-dev:implement)",
@@ -187,6 +188,40 @@ describe("forma del workflow del worker", () => {
     const subida = PASOS[indice("Coste del job") + 1];
     expect(subida?.uses).toMatch(/^actions\/upload-artifact@/);
     expect(subida).toMatchObject({ if: "always()", with: { name: "diverger-coste", path: "${{ runner.temp }}/coste/coste.json" } });
+  });
+
+  // harness#497: lo que pasa a los pasos con la clave no puede venir de algo que el código del modelo pueda escribir.
+  it("el tope llega a cada intento como salida del paso «Tope del job», no por GITHUB_ENV", () => {
+    expect(paso("Tope del job").id).toBe("tope");
+    expect(paso("Tope del job").run).toContain('>> "$GITHUB_OUTPUT"');
+    for (const nombre of ["Worker", "Worker, intento 2", "Worker, intento 3"]) {
+      expect(paso(nombre).env?.TOPE_JOB).toBe("${{ steps.tope.outputs.tope }}");
+    }
+    // Ningún paso deja el tope en GITHUB_ENV: un TOPE_JOB que escribiera otro allí no lo usa nadie, porque el env
+    // del paso manda sobre GITHUB_ENV.
+    for (const p of PASOS) expect(p.run ?? "").not.toMatch(/TOPE_JOB[^\n]*GITHUB_ENV/);
+  });
+
+  it("los pasos con la clave usan el Claude Code que instaló el job, sin BASH_ENV ni ENV", () => {
+    const instalar = paso("claude");
+    expect(instalar.run).toContain('echo "bin=$(npm prefix -g)/bin" >> "$GITHUB_OUTPUT"');
+    expect(indice("claude")).toBeLessThan(indice("Worker"));
+    for (const nombre of ["Worker", "Worker, intento 2", "Worker, intento 3"]) {
+      expect(paso(nombre).env).toMatchObject({ CLAUDE_BIN: "${{ steps.claude.outputs.bin }}", BASH_ENV: "", ENV: "" });
+    }
+    expect(MODELO_SH).toContain('export PATH="$CLAUDE_BIN:/usr/bin:/bin"');
+    expect(MODELO_SH.indexOf('export PATH="$CLAUDE_BIN:/usr/bin:/bin"')).toBeLessThan(MODELO_SH.indexOf("awk"));
+  });
+
+  it("las comprobaciones corren en un contenedor fijo por su digest que solo monta el worktree", () => {
+    expect(JOB.env.IMAGEN_COMPROBACIONES).toMatch(/^node:22\.\d+\.\d+-bookworm-slim@sha256:[0-9a-f]{64}$/);
+    const comprobar = readFileSync(SCRIPT_COMPROBAR, "utf8");
+    const orden = comprobar.slice(comprobar.indexOf("docker run"), comprobar.indexOf('"$IMAGEN_COMPROBACIONES"'));
+    expect([...orden.matchAll(/-v "([^"]+)"/g)].map((m) => m[1])).toEqual(["$WORKTREE:/trabajo"]);
+    expect(orden).toContain("--cap-drop ALL");
+    expect(orden).toContain("--security-opt no-new-privileges");
+    expect(orden).not.toMatch(/--privileged|--env-file|docker\.sock|--network host|RUNNER_TEMP|GITHUB_/);
+    expect([...orden.matchAll(/-e ([A-Za-z_]+)=/g)].map((m) => m[1])).toEqual(["HOME", "CI", "npm_config_cache", "npm_config_update_notifier"]);
   });
 
   it("instala una versión fija de Claude Code y fija las acciones por su commit", () => {
@@ -272,7 +307,7 @@ describe("forma del workflow del worker", () => {
   it("al modelo se le quitan las variables para pedir tokens de OIDC y las credenciales de GCP", () => {
     const quitar = MODELO_SH.indexOf("unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL GOOGLE_APPLICATION_CREDENTIALS");
     expect(quitar).toBeGreaterThanOrEqual(0);
-    expect(quitar).toBeLessThan(MODELO_SH.indexOf("claude -p"));
+    expect(quitar).toBeLessThan(MODELO_SH.indexOf('"$CLAUDE_BIN/claude" -p'));
     expect(MODELO_SH).toContain("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE GOOGLE_GHA_CREDS_PATH");
   });
 
@@ -533,6 +568,7 @@ describe.skipIf(!HAY_JQ)("scripts del worker", () => {
     entorno.PLUGIN_DEV = join(dir, ".diverger-dev", "plugins", "diverger-dev");
     entorno.WORKTREE = worktree;
     entorno.MODELO = "claude-sonnet-5-5";
+    entorno.CLAUDE_BIN = bin;
     // claude de mentira: guarda sus argumentos y si ve la clave y el token de OIDC, y responde como -p.
     falso("claude", `printf '%s\\n' "$@" > "$RUNNER_TEMP/args-claude"
 echo "clave=\${ANTHROPIC_API_KEY:-} oidc=\${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" > "$RUNNER_TEMP/entorno-claude"
@@ -604,8 +640,36 @@ echo "{\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"num_turns\\":3,\\"tot
     ["10 USD como techo si settings.json no lo fija", "20", undefined, "10.00"],
   ])("el tope del job es %s", (_caso, maxUsd, ajustes, tope) => {
     if (ajustes) escribir(repo, ".diverger/settings.json", ajustes);
-    expect(ejecutar("Tope del job", { MAX_USD: maxUsd }).codigo).toBe(0);
-    expect(readFileSync(valor("GITHUB_ENV"), "utf8")).toBe(`TOPE_JOB=${tope}\n`);
+    const salidaPaso = join(temp, "github_output");
+    expect(ejecutar("Tope del job", { MAX_USD: maxUsd, GITHUB_OUTPUT: salidaPaso }).codigo).toBe(0);
+    expect(readFileSync(salidaPaso, "utf8")).toBe(`tope=${tope}\n`);
+    expect(readFileSync(valor("GITHUB_ENV"), "utf8")).toBe("");
+  });
+
+  it("un coste.json que ya estaba no se sube: la carpeta se vacía antes", () => {
+    escribir(temp, "coste/coste.json", { costUsd: 0 });
+    expect(script(SCRIPT_COSTE, "", { INTENTOS: "failure: skipped: skipped:" }).codigo).toBe(0);
+    expect(existsSync(join(temp, "coste", "coste.json"))).toBe(false);
+  });
+
+  it("el intento usa el claude de CLAUDE_BIN y las herramientas del sistema, no las que se añadieron al PATH", () => {
+    // Lo que añadiría GITHUB_PATH va delante en el PATH: un awk, un jq y un claude falsos que dejan una marca.
+    const malo = join(dir, "malo");
+    mkdirSync(malo);
+    for (const nombre of ["awk", "jq", "claude"]) {
+      writeFileSync(join(malo, nombre), `#!/usr/bin/env bash\ntouch "$RUNNER_TEMP/marca-${nombre}"\nexit 1\n`, { mode: 0o755 });
+    }
+    const r = script(SCRIPT_MODELO, "1", { PATH: `${malo}:${bin}:${process.env.PATH ?? ""}`, TOPE_JOB: "2.00" });
+    expect(r.motivo).toBe("");
+    expect(r.codigo).toBe(0);
+    for (const nombre of ["awk", "jq", "claude"]) expect(existsSync(join(temp, `marca-${nombre}`))).toBe(false);
+    expect(existsSync(join(temp, "args-claude"))).toBe(true);
+  });
+
+  it("sin el Claude Code que instaló el job no lanza el modelo", () => {
+    const r = script(SCRIPT_MODELO, "1", { CLAUDE_BIN: join(dir, "no-existe") });
+    expect(r.codigo).toBe(1);
+    expect(r.motivo).toBe(`No está Claude Code en ${join(dir, "no-existe")}`);
   });
 
   it("si la skill se para con BLOQUEADA, el worker falla con su motivo", () => {
@@ -621,18 +685,48 @@ echo "{\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"num_turns\\":3,\\"tot
     expect(existsSync(join(temp, "args-claude"))).toBe(false);
   });
 
-  it("las comprobaciones corren sin la clave de Anthropic y dejan verde o rojo", () => {
-    mkdirSync(join(worktree, "node_modules"));
-    falso("npm", `echo "clave=\${ANTHROPIC_API_KEY:-} oidc=\${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" > "$RUNNER_TEMP/entorno-npm"; exit \${CODIGO_NPM:-0}`);
-    const verde = script(SCRIPT_COMPROBAR, "1", { ANTHROPIC_API_KEY: "sk-prueba", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "oidc" });
-    expect(verde.codigo).toBe(0);
-    expect(readFileSync(join(temp, "comprobaciones"), "utf8").trim()).toBe("verde");
-    expect(readFileSync(join(temp, "entorno-npm"), "utf8").trim()).toBe("clave= oidc=");
+  describe("comprobaciones", () => {
+    const GITDIR = "gitdir: /home/runner/work/app/app/.git/worktrees/worktree";
 
-    const rojo = script(SCRIPT_COMPROBAR, "2", { CODIGO_NPM: "1" });
-    expect(rojo.codigo).toBe(1);
-    expect(readFileSync(join(temp, "comprobaciones"), "utf8").trim()).toBe("rojo");
-    expect(existsSync(join(temp, "comprobaciones-2.log"))).toBe(true);
+    beforeEach(() => {
+      entorno.IMAGEN_COMPROBACIONES = "node:22@sha256:0";
+      writeFileSync(join(worktree, ".git"), `${GITDIR}\n`);
+      // docker de mentira: guarda sus argumentos y hace lo peor que podría hacer el código del modelo en el
+      // worktree, que es lo único que ve: cambiar su .git para que el git de los pasos siguientes use otro repositorio.
+      falso("docker", `printf '%s\\n' "$@" > "$RUNNER_TEMP/args-docker"
+rm -f "$WORKTREE/.git"; mkdir -p "$WORKTREE/.git/hooks"
+echo "salida de npm run check"
+exit \${CODIGO_DOCKER:-0}`);
+    });
+
+    it("corren en el contenedor, sin ninguna variable del job, y dejan verde o rojo", () => {
+      const verde = script(SCRIPT_COMPROBAR, "1", { ANTHROPIC_API_KEY: "sk-prueba", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "oidc" });
+      expect(verde.codigo).toBe(0);
+      expect(readFileSync(join(temp, "comprobaciones"), "utf8").trim()).toBe("verde");
+      const args = readFileSync(join(temp, "args-docker"), "utf8");
+      expect(args).toContain(`${worktree}:/trabajo\n`);
+      expect(args).toContain("node:22@sha256:0\n");
+      expect(args).not.toMatch(/sk-prueba|oidc|ANTHROPIC|ACTIONS_ID_TOKEN|RUNNER_TEMP|GITHUB_/);
+      expect(readFileSync(join(temp, "comprobaciones-1.log"), "utf8")).toBe("salida de npm run check\n");
+
+      const rojo = script(SCRIPT_COMPROBAR, "2", { CODIGO_DOCKER: "1" });
+      expect(rojo.codigo).toBe(1);
+      expect(readFileSync(join(temp, "comprobaciones"), "utf8").trim()).toBe("rojo");
+      expect(existsSync(join(temp, "comprobaciones-2.log"))).toBe(true);
+    });
+
+    it("reponen el .git del worktree aunque el contenedor lo cambie", () => {
+      for (const codigo of ["0", "1"]) {
+        script(SCRIPT_COMPROBAR, "1", { CODIGO_DOCKER: codigo });
+        expect(readFileSync(join(worktree, ".git"), "utf8")).toBe(`${GITDIR}\n`);
+      }
+    });
+
+    it("sin la imagen o sin el worktree no ejecutan nada", () => {
+      expect(script(SCRIPT_COMPROBAR, "1", { IMAGEN_COMPROBACIONES: "" }).codigo).toBe(2);
+      expect(script(SCRIPT_COMPROBAR, "1", { WORKTREE: join(dir, "no-existe") }).codigo).toBe(2);
+      expect(existsSync(join(temp, "args-docker"))).toBe(false);
+    });
   });
 });
 
