@@ -8,6 +8,7 @@ export interface Ejecucion {
   path: string;
   actor: { login: string };
   display_title: string;
+  head_branch?: string;
   status: string;
   created_at: string;
   run_started_at?: string;
@@ -31,7 +32,7 @@ export const PERSONAS: Datos["usuarios"] = {
 export function lanzadoPorElBucle(persona: string, iniciativa = "prestamos"): Ejecucion[] {
   return [
     { id: 900, path: ".github/workflows/diverger-worker.yml", actor: { login: "diverger-harness[bot]" },
-      display_title: "diverger-worker TA-004 c7fbf6d2", status: "completed",
+      display_title: "diverger-worker TA-004 c7fbf6d2", head_branch: "main", status: "completed",
       created_at: "2026-11-02T10:05:00Z", updated_at: "2026-11-02T10:20:00Z" },
     { id: 800, path: ".github/workflows/diverger-bucle.yml", actor: { login: persona },
       display_title: `diverger-bucle ${iniciativa}`, status: "completed",

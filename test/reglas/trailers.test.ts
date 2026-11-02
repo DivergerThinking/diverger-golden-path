@@ -110,13 +110,13 @@ function commitDelHarness(iniciadoPor: string | undefined, coautor = iniciadoPor
   commit(`feat: TA-004 Prestar un equipo\n\n${trailers.join("\n")}`, HARNESS);
 }
 
-async function comprobarPR(datos: Datos, cuerpo = CUERPO, rama = RAMA): Promise<{ codigo: number; errores: string }> {
+async function comprobarPR(datos: Datos, cuerpo = CUERPO, rama = RAMA, base = "main"): Promise<{ codigo: number; errores: string }> {
   const api = await arrancar(datos);
   servidor = api.servidor;
   try {
     await promisify(execFile)(process.execPath, [SCRIPT, "base..HEAD"], {
       cwd: repo,
-      env: { ...process.env, GITHUB_API_URL: api.url, GITHUB_REPOSITORY: REPO, GH_TOKEN: "token-de-prueba", PR_CUERPO: cuerpo, PR_RAMA: rama },
+      env: { ...process.env, GITHUB_API_URL: api.url, GITHUB_REPOSITORY: REPO, GH_TOKEN: "token-de-prueba", PR_CUERPO: cuerpo, PR_RAMA: rama, PR_BASE: base },
     });
     return { codigo: 0, errores: "" };
   } catch (error) {
@@ -164,6 +164,28 @@ describe("trailer de quien lanzó el harness (EN-OPS-06)", () => {
     const { codigo, errores } = await comprobarPR(LANZADO_POR_JOSELCS, "PR sin enlace");
     expect(codigo).toBe(1);
     expect(errores).toContain("No se puede comprobar quién lanzó la ejecución: la PR no enlaza el job del worker");
+  });
+
+  it("el CI falla si el job enlazado es el worker de otra tarea, según GitHub y no según la PR", async () => {
+    commitDelHarness("joselcs");
+    const ejecuciones = lanzadoPorElBucle("joselcs").map((e) => e.id === 900 ? { ...e, display_title: "diverger-worker TA-005 c7fbf6d2" } : e);
+    const { codigo, errores } = await comprobarPR({ ejecuciones, usuarios: PERSONAS });
+    expect(codigo).toBe(1);
+    expect(errores).toContain("No se puede comprobar quién lanzó la ejecución: La ejecución 900 es del worker de la tarea TA-005, no de la tarea TA-004 de la rama de la PR");
+  });
+
+  it("el CI falla si el job enlazado corrió en otra rama que la base de la PR", async () => {
+    commitDelHarness("joselcs");
+    const { codigo, errores } = await comprobarPR(LANZADO_POR_JOSELCS, CUERPO, RAMA, "release");
+    expect(codigo).toBe(1);
+    expect(errores).toContain("La ejecución 900 corrió en la rama main, no en la rama base de la PR (release)");
+  });
+
+  it("el CI falla si la PR del harness no sale de la rama de un worker", async () => {
+    commitDelHarness("joselcs");
+    const { codigo, errores } = await comprobarPR(LANZADO_POR_JOSELCS, CUERPO, "otra-rama");
+    expect(codigo).toBe(1);
+    expect(errores).toContain("la rama de la PR (otra-rama) no es la de un worker (diverger/<iniciativa>/<tarea>)");
   });
 
   it("los commits de personas y de agentes en su sesión no necesitan el trailer ni la API", () => {
@@ -219,6 +241,7 @@ describe("job trailers del CI", () => {
       GH_TOKEN: "${{ github.token }}",
       PR_CUERPO: "${{ github.event.pull_request.body }}",
       PR_RAMA: "${{ github.head_ref }}",
+      PR_BASE: "${{ github.base_ref }}",
     });
   });
 });

@@ -76,6 +76,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_CUERPO: ${{ github.event.pull_request.body }}
           PR_RAMA: ${{ github.head_ref }}
+          PR_BASE: ${{ github.base_ref }}
         run: node scripts/trailers.mjs "$RANGO"
 
   # Solo en la plantilla: un repositorio creado desde ella recibe los ficheros de este commit y

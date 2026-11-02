@@ -30,13 +30,28 @@ function ruta(path) {
 
 /**
  * Persona que lanzó la ejecución del job del worker `ejecucion`, en `repo`. `api(ruta)` devuelve el JSON
- * de la API REST de GitHub. Lanza un Error con el motivo si no se puede saber.
+ * de la API REST de GitHub. Con `pr` ({ tarea, base }), comprueba además con los datos de GitHub, no con
+ * lo que diga la PR, que ese job es el worker de la tarea de la PR y corrió en su rama base. Con un
+ * «Re-run» cuenta quien lanzó la ejecución la primera vez (actor), no quien la relanzó. Lanza un Error
+ * con el motivo si no se puede saber.
  */
-export async function quienLanzo({ api, repo, ejecucion, iniciativa }) {
+export async function quienLanzo({ api, repo, ejecucion, iniciativa, pr }) {
   if (!/^\d+$/.test(String(ejecucion))) throw new Error(`El id de la ejecución «${ejecucion}» no es válido`);
   const worker = await api(`repos/${repo}/actions/runs/${ejecucion}`);
   if (ruta(worker.path) !== WORKFLOW_WORKER) {
     throw new Error(`La ejecución ${ejecucion} no es del worker (${WORKFLOW_WORKER})`);
+  }
+  if (pr) {
+    // El nombre del job del worker es «diverger-worker <tarea> <ejecución del bucle>» (su run-name).
+    const tarea = /^diverger-worker (\S+) \S+$/.exec(worker.display_title ?? "")?.[1];
+    if (tarea !== pr.tarea) {
+      throw new Error(`La ejecución ${ejecucion} es del worker de la tarea ${tarea ?? "(desconocida)"}, `
+        + `no de la tarea ${pr.tarea} de la rama de la PR`);
+    }
+    if (worker.head_branch !== pr.base) {
+      throw new Error(`La ejecución ${ejecucion} corrió en la rama ${worker.head_branch ?? "(desconocida)"}, `
+        + `no en la rama base de la PR (${pr.base})`);
+    }
   }
   let lanzada = worker;
   if (esBot(worker.actor?.login)) {

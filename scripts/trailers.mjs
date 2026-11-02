@@ -2,8 +2,9 @@
 // harness, además, dicen qué persona lo lanzó (EN-OPS-06, RQ.066): Diverger-Iniciado-por y su
 // Co-authored-by con el correo noreply de GitHub, y el CI lo compara con quien lanzó la ejecución.
 // Uso en el CI: node scripts/trailers.mjs <base>..<head>. Falla si un commit de agente no los lleva.
-// Para los commits del harness lee la PR de PR_CUERPO (el enlace al job del worker) y PR_RAMA
-// (diverger/<iniciativa>/<tarea>), y pregunta a la API de GitHub con GH_TOKEN (scripts/lanzador.mjs).
+// Para los commits del harness lee la PR de PR_CUERPO (el enlace al job del worker), PR_RAMA
+// (diverger/<iniciativa>/<tarea>) y PR_BASE (su rama base), y pregunta a la API de GitHub con
+// GH_TOKEN (scripts/lanzador.mjs).
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { apiDeGitHub, correoNoreply, esBot, quienLanzo } from "./lanzador.mjs";
@@ -77,9 +78,10 @@ export function ejecucionDelCuerpo(cuerpo) {
   return /Job del worker: \S*\/actions\/runs\/(\d+)/.exec(cuerpo ?? "")?.[1];
 }
 
-/** La iniciativa de la rama de un worker, diverger/<iniciativa>/<tarea>. */
-export function iniciativaDeLaRama(rama) {
-  return /^diverger\/([a-z0-9][a-z0-9-]{0,63})\/[^/]+$/.exec(rama ?? "")?.[1];
+/** La iniciativa y la tarea de la rama de un worker, diverger/<iniciativa>/<tarea>. */
+export function ramaDelWorker(rama) {
+  const partes = /^diverger\/([a-z0-9][a-z0-9-]{0,63})\/([^/]+)$/.exec(rama ?? "");
+  return partes ? { iniciativa: partes[1], tarea: partes[2] } : undefined;
 }
 
 /**
@@ -107,8 +109,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const errores = await comprobar(commits(rango), () => {
     const ejecucion = ejecucionDelCuerpo(process.env.PR_CUERPO);
     if (!ejecucion) throw new Error("la PR no enlaza el job del worker que la abrió");
+    const rama = ramaDelWorker(process.env.PR_RAMA);
+    if (!rama) throw new Error(`la rama de la PR (${process.env.PR_RAMA ?? ""}) no es la de un worker (diverger/<iniciativa>/<tarea>)`);
     return quienLanzo({ api: apiDeGitHub(), repo: process.env.GITHUB_REPOSITORY ?? "", ejecucion,
-      iniciativa: iniciativaDeLaRama(process.env.PR_RAMA) });
+      iniciativa: rama.iniciativa, pr: { tarea: rama.tarea, base: process.env.PR_BASE ?? "" } });
   });
   for (const error of errores) console.error(error);
   process.exit(errores.length ? 1 : 0);
