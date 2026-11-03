@@ -1,6 +1,9 @@
-# Lo que los agentes no deben cambiar sin el titular de la aplicación (EN-OPS-04, ADR 0014 del
-# harness). Al crear una aplicación desde la plantilla, cambia @joselcs por su titular. El ruleset
-# «codeowners» del harness (infra/github/) exige su aprobación en cualquier PR que toque estos
-# ficheros, también en modo yolo; sin ese ruleset, este fichero solo pide la revisión.
+# Lo que los agentes no deben cambiar sin una persona (EN-OPS-04, ADR 0014 del harness). Al crear una
+# aplicación desde la plantilla, cambia @joselcs por su titular. El ruleset «codeowners» del harness
+# (infra/github/) exige la aprobación de un propietario en cualquier PR que toque estos ficheros, también
+# en modo yolo; sin ese ruleset, este fichero solo pide la revisión.
 /.diverger/settings.json @joselcs
 /.github/CODEOWNERS @joselcs
+# La suite de aceptación es el examen de las historias (EN-CAL-01, ADR 0031 del harness): la cambia una
+# persona desde el backlog, nunca la PR de una tarea. Dos propietarios, para que uno apruebe las PR del otro.
+/tests/aceptacion/ @joselcs @686f6c61
