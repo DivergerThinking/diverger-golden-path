@@ -242,7 +242,7 @@ function trailersDeMantenimiento(iniciadoPor: string, id = PERSONAS[iniciadoPor]
     `Diverger-Iniciado-por: ${iniciadoPor}`, `Co-authored-by: ${iniciadoPor} <${String(id)}+${iniciadoPor}@users.noreply.github.com>`];
 }
 
-describe("commits de mantenimiento del kit de evaluación (harness#528)", () => {
+describe.skipIf(!HAY_GIT)("commits de mantenimiento del kit de evaluación (harness#528)", () => {
   // Sin ejecuciones en la API: si el CI buscara la del worker, fallaría.
   const SIN_EJECUCIONES = { ejecuciones: [], usuarios: PERSONAS };
 
