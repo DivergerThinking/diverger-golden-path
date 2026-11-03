@@ -66,11 +66,13 @@ El contexto `ejemplo` solo sirve para que todo funcione desde el primer momento:
 gh workflow run diverger-bucle.yml -f initiative=<iniciativa> [-f max-workers=1] [-f restart=true]
 ```
 
-Es un programa sin modelo, `bucle.py` del núcleo, que el job descarga del harness con un token de la GitHub App de solo lectura. En cada vuelta actualiza la rama base, mira el job y la PR de cada worker y lanza `diverger-worker.yml` para las siguientes tareas listas, de una en una por defecto. Se para cuando todas las tareas están hechas, una falla tres veces, se agota el presupuesto de pasos o una espera su test de aceptación; el resumen del job dice por qué. Si se relanza, reanuda sin repetir lo hecho. `restart` levanta una parada por bloqueo o por presupuesto.
+Es un programa sin modelo, `bucle.py` del núcleo, que el job descarga del harness con un token de la GitHub App de solo lectura. En cada vuelta actualiza la rama base, mira el job y la PR de cada worker y lanza `diverger-worker.yml` para las siguientes tareas listas, de una en una por defecto. Se para cuando todas las tareas están hechas, se agota el presupuesto de pasos o una espera su test de aceptación; el resumen del job dice por qué.
+
+**Escalera de reintentos** (HU-EJE-05, ADR 0029 del harness). Si un worker falla, el bucle relanza la tarea hasta tres veces con las entradas `attempt` y `previous` (el job anterior). El worker lee el diagnóstico que dejó ese job: en el intento 2 empieza de cero y en el 3 replanifica dentro de la tarea. Si el tercero también falla, la tarea queda bloqueada, el bucle abre una issue en este repositorio, asignada a quien lanzó el bucle (`github.actor`, si es una persona), y sigue con las tareas que no dependen de ella. Se para con `blocked` cuando ya no puede lanzar nada más. Si se relanza, reanuda sin repetir lo hecho. `restart` levanta una parada por bloqueo o por presupuesto.
 
 **Gasto.** A cada worker le pasa su tope en la entrada `max-usd`, que sale de `budget.maxWorkerUsd` de `.diverger/settings.json` (10 USD si no está), y suma lo que gasta cada uno, que lee del artefacto `diverger-coste` de su job. Un worker sin ese artefacto cuenta su tope entero. Se para con `budget-exhausted` cuando el total llega a `budget.maxRunUsd` (50 USD por defecto) (HU-EJE-06, ADR 0024 del harness). El estado, con el gasto, vive en `run.json`, que no se versiona: al terminar, también si falla, el job lo sube como artefacto `diverger-bucle-<iniciativa>`, y al relanzarse recupera el más reciente de una ejecución de este workflow en la rama base, también el de la propia ejecución si se relanza con «Re-run» (`.github/diverger/bucle-estado.sh`). Si GitHub da cualquier error, el job falla y no sube ningún `run.json`, en vez de empezar con el gasto a cero; solo empieza de cero si no hay ningún artefacto.
 
-Necesita la GitHub App `diverger-harness` instalada en este repositorio (Actions: escritura, Contents y Pull requests: lectura) y en el harness (Contents: lectura), con las variables `DIVERGER_HARNESS_APP_ID` y el secreto `DIVERGER_HARNESS_APP_KEY`. La variable `DIVERGER_HARNESS_REF` fija la versión del núcleo (por defecto, `main`).
+Necesita la GitHub App `diverger-harness` instalada en este repositorio (Actions e Issues: escritura, Contents y Pull requests: lectura) y en el harness (Contents: lectura), con las variables `DIVERGER_HARNESS_APP_ID` y el secreto `DIVERGER_HARNESS_APP_KEY`. La variable `DIVERGER_HARNESS_REF` fija la versión del núcleo (por defecto, `main`).
 
 ## Datos: el puerto de persistencia
 
@@ -103,7 +105,8 @@ export const rutas: FastifyPluginAsync<OpcionesContexto> = (app, { almacen }) =>
 
 | | |
 |---|---|
-| **Lanzamiento** | `workflow_dispatch` en la rama base con las entradas `initiative`, `task`, `run` (el identificador de la ejecución del bucle) y, opcional, `max-usd` (el tope de gasto del job) |
+| **Lanzamiento** | `workflow_dispatch` en la rama base con las entradas `initiative`, `task`, `run` (el identificador de la ejecución del bucle) y, opcionales, `max-usd` (el tope de gasto del job), `attempt` (el intento del bucle, 1 por defecto) y `previous` (el job del intento anterior) |
+| **Diagnóstico** | Siempre sube el artefacto `diverger-diagnostico` (`diagnostico.md`): el motivo, el final de las últimas comprobaciones y de la respuesta del modelo, y el diagnóstico del intento anterior |
 | **Nombre del job** | `diverger-worker <task> <run>` |
 | **Rama y PR** | Rama `diverger/<iniciativa>/<tarea>`; la PR lleva `<!-- diverger:task=<tarea>;run=<run> -->` e incluye el código de la tarea y `tasks/<tarea>.json` en `done` |
 | **Resultado** | Éxito: el job termina con una PR abierta. Fallo: termina sin PR y el resumen del job dice por qué |
