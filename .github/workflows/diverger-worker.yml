@@ -272,7 +272,9 @@ jobs:
         run: bash .github/diverger/worker-comprobar.sh 3
 
       # Lo que el job acepta del worker: comprobaciones en verde, algún cambio y ninguno en el plan ni en los
-      # workflows. Entonces es el job, no el modelo, quien marca la tarea como hecha.
+      # workflows. Entonces es el job, no el modelo, quien marca la tarea como hecha. Sin cambios solo se acepta si el
+      # modelo dijo con «YA-CUBIERTA:» que otra tarea ya la hizo (harness#538): la PR solo marca la tarea, con el
+      # motivo, y la revisión y la política de aprobación deciden.
       - name: Comprobar el resultado
         working-directory: ${{ env.WORKTREE }}
         run: |
@@ -280,7 +282,10 @@ jobs:
           [ "$(cat "$RUNNER_TEMP/comprobaciones" 2>/dev/null)" = verde ] \
             || fallar "Las comprobaciones (npm run check) siguen en rojo después de 3 intentos"
           git add -A
-          git diff --cached --quiet && fallar "El worker no ha cambiado nada"
+          if git diff --cached --quiet; then
+            [ -s "$RUNNER_TEMP/cubierta" ] || fallar "El worker no ha cambiado nada"
+            cp "$RUNNER_TEMP/cubierta" "$RUNNER_TEMP/solo-marca"
+          fi
           plan=$(git diff --cached --name-only -- .diverger/)
           [ -z "$plan" ] || fallar "El worker ha cambiado el plan: $plan"
           # La App no tiene permiso Workflows: GitHub rechazaría el push. Se dice aquí, con el motivo.
@@ -321,9 +326,11 @@ jobs:
           LANZADO_POR_NOMBRE=$(jq -r .nombre <<< "$persona")
           echo "LANZADO_POR=$LANZADO_POR" >> "$GITHUB_ENV"
           titulo=$(jq -r .title "$FICHERO_TAREA")
+          tipo=feat
+          [ ! -s "$RUNNER_TEMP/solo-marca" ] || tipo=chore  # Solo marca la tarea (harness#538).
           git -c core.hooksPath=/dev/null \
             -c user.name="$APP[bot]" -c user.email="$id+$APP[bot]@users.noreply.github.com" \
-            commit --quiet -m "feat: $TAREA $titulo" \
+            commit --quiet -m "$tipo: $TAREA $titulo" \
             --trailer "Diverger-Rol: Desarrollador" \
             --trailer "Diverger-Modelo: $MODELO" \
             --trailer "Diverger-Tarea: $TAREA" \
@@ -351,6 +358,12 @@ jobs:
             echo
             echo "Lanzado por @$LANZADO_POR. Job del worker: $GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
             echo
+            if [ -s "$RUNNER_TEMP/solo-marca" ]; then
+              echo "**Solo marca la tarea como hecha.** El worker no ha cambiado código porque dice que otra tarea ya la cubre. Revisa que sea así antes de integrarla:"
+              echo
+              printf '> %s\n' "$(cat "$RUNNER_TEMP/solo-marca")"
+              echo
+            fi
             jq -rs --arg modelo "$MODELO" \
               '"Coste del worker: \(map(.total_cost_usd // 0) | max) USD en \(map(.num_turns // 0) | add) turnos y \(length) intentos (modelo `\($modelo)`). Comprobaciones (npm run check) en verde."' \
               "$RUNNER_TEMP"/salida-*.json
