@@ -256,6 +256,18 @@ describe("forma del workflow del worker", () => {
     expect(pr).toContain('--base "$GITHUB_REF_NAME"');
   });
 
+  it("sin cambios solo sigue si el modelo dijo YA-CUBIERTA, y entonces la PR solo marca la tarea y lo explica (harness#538)", () => {
+    const resultado = paso("Comprobar el resultado").run ?? "";
+    expect(resultado).toMatch(
+      /if git diff --cached --quiet; then\s+\[ -s "\$RUNNER_TEMP\/cubierta" \] \|\| fallar "El worker no ha cambiado nada"/,
+    );
+    expect(resultado.indexOf("comprobaciones")).toBeLessThan(resultado.indexOf("cubierta"));
+    expect(paso("Commit con los trailers").run).toContain('[ ! -s "$RUNNER_TEMP/solo-marca" ] || tipo=chore');
+    expect(paso("Rama y PR").run).toContain("**Solo marca la tarea como hecha.**");
+    expect(MODELO_SH).toContain("grep -E '^(YA-CUBIERTA|ALREADY-DONE):'");
+    expect(MODELO_SH).toContain('rm -f "$RUNNER_TEMP/cubierta"');
+  });
+
   it("activa el auto-merge de su PR y, si no puede, avisa sin fallar (HU-GP-01)", () => {
     const pr = paso("Rama y PR").run ?? "";
     expect(pr).toContain('gh pr merge "$url" -R "$repo" --auto --merge --delete-branch');
