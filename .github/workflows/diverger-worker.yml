@@ -99,6 +99,13 @@ jobs:
       COLLECTOR_IMAGE: us-docker.pkg.dev/cloud-ops-agents-artifacts/google-cloud-opentelemetry-collector/otelcol-google:0.163.1
       # Imagen de las comprobaciones (npm run check), fija por su digest: la misma versión mayor de Node que setup-node.
       IMAGEN_COMPROBACIONES: node:22.23.4-bookworm-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da
+      # Todos los git del job, sin fsmonitor ni hooks del repositorio: esta configuración manda sobre la del worktree,
+      # que el código de las comprobaciones podría haber cambiado (harness#81).
+      GIT_CONFIG_COUNT: "2"
+      GIT_CONFIG_KEY_0: core.fsmonitor
+      GIT_CONFIG_VALUE_0: "false"
+      GIT_CONFIG_KEY_1: core.hooksPath
+      GIT_CONFIG_VALUE_1: /dev/null
     steps:
       # Las entradas llegan de fuera: se comprueban antes de usarlas y nunca se pegan en un script.
       - name: Comprobar las entradas
@@ -177,12 +184,13 @@ jobs:
         run: |
           fallar() { printf '%s\n' "$1" > "$RUNNER_TEMP/motivo"; echo "::error::$1"; exit 1; }
           # Con el usuario del runner: el fichero de credenciales solo lo puede leer él.
-          docker run -d --name otel --user "$(id -u):$(id -g)" -p 4317:4317 -p 13133:13133 \
+          # Solo en localhost: el contenedor de las comprobaciones no llega al Collector (harness#81).
+          docker run -d --name otel --user "$(id -u):$(id -g)" -p 127.0.0.1:4317:4317 -p 127.0.0.1:13133:13133 \
             -e GCP_PROJECT_ID -e GOOGLE_APPLICATION_CREDENTIALS=/credenciales.json \
             -v "$GOOGLE_APPLICATION_CREDENTIALS:/credenciales.json:ro" \
             -v "$PWD/.github/telemetria/collector.yaml:/etc/otelcol/config.yaml:ro" \
             "$COLLECTOR_IMAGE" --config=/etc/otelcol/config.yaml
-          for _ in $(seq 30); do curl -sf localhost:13133 >/dev/null && exit 0; sleep 2; done
+          for _ in $(seq 30); do curl -sf 127.0.0.1:13133 >/dev/null && exit 0; sleep 2; done
           docker logs otel
           fallar "El Collector de la telemetría no arranca"
 
@@ -247,7 +255,11 @@ jobs:
           head -c 12000 "$RUNNER_TEMP/anterior/diagnostico.md" > "$RUNNER_TEMP/diagnostico-anterior.md" 2>/dev/null \
             || { echo "::warning::El job $PREVIO no dejó diagnóstico: el intento $INTENTO_BUCLE sigue sin él"; exit 0; }
           echo "Diagnóstico del job $PREVIO, para el intento $INTENTO_BUCLE:"
+          # Lo escribieron el modelo y su código: sin órdenes de workflow mientras se imprime (harness#81).
+          fin="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          echo "::stop-commands::$fin"
           cat "$RUNNER_TEMP/diagnostico-anterior.md"
+          echo "::$fin::"
 
       - name: Worker
         id: worker-1
@@ -326,9 +338,11 @@ jobs:
           fi
           plan=$(git diff --cached --name-only -- .diverger/)
           [ -z "$plan" ] || fallar "El worker ha cambiado el plan: $plan"
-          # La App no tiene permiso Workflows: GitHub rechazaría el push. Se dice aquí, con el motivo.
+          # Solo las rutas que el modelo puede escribir (--allowedTools de worker-modelo.sh). Lo demás solo lo ha
+          # podido cambiar el código de las comprobaciones, y no entra en la PR (harness#81).
           cambiados=$(git diff --cached --name-only)
-          ! grep -q '^\.github/workflows/' <<< "$cambiados" || fallar "El worker ha cambiado .github/workflows/"
+          fuera=$(grep -Ev '^(src/|web/|app/contextos\.ts$)' <<< "$cambiados" || true)
+          [ -z "$fuera" ] || fallar "El worker ha cambiado rutas fuera de src/, web/ y app/contextos.ts: ${fuera//$'\n'/ }"
           jq '.status = "done"' "$FICHERO_TAREA" > "$RUNNER_TEMP/tarea.json"
           cp "$RUNNER_TEMP/tarea.json" "$FICHERO_TAREA"
           git add "$FICHERO_TAREA"

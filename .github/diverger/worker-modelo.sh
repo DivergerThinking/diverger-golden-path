@@ -75,11 +75,13 @@ $(tail -n 150 "$RUNNER_TEMP/comprobaciones-$anterior.log")"
 fi
 
 set +e
+# Read, Glob y Grep no van en --allowedTools: dentro del directorio de trabajo, que es el worktree, se permiten por
+# defecto, y fuera, con dontAsk, se deniegan. Con «Read» sin ruta el modelo leía todo el runner (harness#81).
 "$CLAUDE_BIN/claude" -p "$instrucciones" "${sesion[@]}" \
   --model "$MODELO" --permission-mode dontAsk \
   --plugin-dir "$PLUGIN_DEV" \
   --tools "Read,Glob,Grep,Edit,Write,Skill" \
-  --allowedTools "Read" "Glob" "Grep" "Skill(diverger-dev:implement)" \
+  --allowedTools "Skill(diverger-dev:implement)" \
     "Edit(./src/**)" "Write(./src/**)" "Edit(./web/**)" "Write(./web/**)" \
     "Edit(./app/contextos.ts)" "Write(./app/contextos.ts)" \
   --setting-sources user --strict-mcp-config \
