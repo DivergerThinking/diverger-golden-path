@@ -943,8 +943,7 @@ describe.skipIf(!HAY_BASH || !HAY_GIT)("comprobaciones del worker en su contened
   });
 
   it("si no puede deshacer lo de fuera de src/, no ejecuta nada", () => {
-    writeFileSync(join(valor("WORKTREE"), ".git"), "gitdir: /no/existe
-");
+    writeFileSync(join(valor("WORKTREE"), ".git"), "gitdir: /no/existe\n");
     const r = comprobar(1);
     expect(r.codigo).toBe(2);
     expect(r.salida).toContain("No se puede deshacer");
