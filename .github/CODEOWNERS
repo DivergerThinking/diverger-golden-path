@@ -3,6 +3,14 @@
 # (infra/github/) exige la aprobación de un propietario en cualquier PR que toque estos ficheros, también
 # en modo yolo; sin ese ruleset, este fichero solo pide la revisión.
 /.diverger/settings.json @joselcs
+# Lo que ejecutan el CI y los workers con sus credenciales, y lo que decide qué se instala y se despliega: el
+# worker solo escribe src/, web/ y app/contextos.ts, y nada más debe cambiar sin una persona (harness#81).
+/.github/ @joselcs
+/scripts/ @joselcs
+/infra/ @joselcs
+/package.json @joselcs
+/package-lock.json @joselcs
+/Dockerfile @joselcs
 /.github/CODEOWNERS @joselcs
 # La suite de aceptación es el examen de las historias (EN-CAL-01, ADR 0031 del harness): la cambia una
 # persona desde el backlog, nunca la PR de una tarea. Dos propietarios, para que uno apruebe las PR del otro.

@@ -165,9 +165,19 @@ describe("forma del workflow del worker", () => {
     const orden = MODELO_SH.slice(MODELO_SH.indexOf('"$CLAUDE_BIN/claude" -p'));
     const bloque = orden.slice(orden.indexOf("--allowedTools"), orden.indexOf("--setting-sources"));
     const permitidas = [...bloque.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect(permitidas).toEqual(["Read", "Glob", "Grep", "Skill(diverger-dev:implement)",
+    // Read, Glob y Grep no van en la lista: dentro del worktree se permiten por defecto y fuera se deniegan. Con
+    // «Read» sin ruta el modelo leía todo el runner (harness#81).
+    expect(permitidas).toEqual(["Skill(diverger-dev:implement)",
       "Edit(./src/**)", "Write(./src/**)", "Edit(./web/**)", "Write(./web/**)",
       "Edit(./app/contextos.ts)", "Write(./app/contextos.ts)"]);
+  });
+
+  it("todos los git del job van sin fsmonitor ni hooks del repositorio (harness#81)", () => {
+    expect(JOB.env).toMatchObject({
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: "core.fsmonitor", GIT_CONFIG_VALUE_0: "false",
+      GIT_CONFIG_KEY_1: "core.hooksPath", GIT_CONFIG_VALUE_1: "/dev/null",
+    });
   });
 
   it("tiene topes de turnos, de gasto y de tiempo por intento", () => {
@@ -226,6 +236,11 @@ describe("forma del workflow del worker", () => {
     expect(orden).toContain("--security-opt no-new-privileges");
     expect(orden).not.toMatch(/--privileged|--env-file|docker\.sock|--network host|RUNNER_TEMP|GITHUB_/);
     expect([...orden.matchAll(/-e ([A-Za-z_]+)=/g)].map((m) => m[1])).toEqual(["HOME", "CI", "npm_config_cache", "npm_config_update_notifier"]);
+    // Solo la instalación tiene red; npm run check, que ejecuta el código del modelo, no (harness#81).
+    expect(orden).toContain('--network "$1"');
+    expect(comprobar).toContain("ejecutar bridge 'npm ci --no-audit --no-fund'");
+    expect(comprobar).toContain("ejecutar none 'npm run check'");
+    expect(comprobar.match(/ejecutar (?:bridge|none) /g)).toHaveLength(2);
   });
 
   it("el CI ejecuta las comprobaciones en el contenedor del worker, con su imagen y su script (harness#533)", () => {
@@ -329,7 +344,8 @@ describe("forma del workflow del worker", () => {
     expect(JOB.env.COLLECTOR_IMAGE).toMatch(/^us-docker\.pkg\.dev\/cloud-ops-agents-artifacts\/google-cloud-opentelemetry-collector\/otelcol-google:\d+\.\d+\.\d+$/);
     const arranque = paso("Arrancar el Collector").run ?? "";
     expect(arranque).toContain('-v "$PWD/.github/telemetria/collector.yaml:/etc/otelcol/config.yaml:ro"');
-    expect(arranque).toContain("-p 4317:4317");
+    expect(arranque).toContain("-p 127.0.0.1:4317:4317");
+    expect(arranque).not.toMatch(/-p (4317|13133):/);
     expect(paso("Arrancar el Collector")["working-directory"]).toBeUndefined();
     expect(existsSync(join(RAIZ, ".github", "telemetria", "collector.yaml"))).toBe(true);
   });
@@ -342,7 +358,7 @@ describe("forma del workflow del worker", () => {
     const ajustes = JSON.parse(readFileSync(join(RAIZ, ".github", "telemetria", "managed-settings.json"), "utf8")) as { env: Record<string, string> };
     expect(ajustes.env).toMatchObject({
       CLAUDE_CODE_ENABLE_TELEMETRY: "1",
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4317",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4317",
       OTEL_LOG_USER_PROMPTS: "0",
       OTEL_LOG_ASSISTANT_RESPONSES: "0",
       OTEL_LOG_TOOL_DETAILS: "0",
@@ -561,7 +577,18 @@ describe.skipIf(!HAY_BASH || !HAY_GIT)("worktree del worker", () => {
       ["tocando los workflows", (wt: string) => {
         writeFileSync(join(temp, "comprobaciones"), "verde\n");
         escribir(wt, ".github/workflows/otro.yml", "on: push\n");
-      }, "El worker ha cambiado .github/workflows/"],
+      }, "El worker ha cambiado rutas fuera de src/, web/ y app/contextos.ts: .github/workflows/otro.yml"],
+      // harness#81: lo que no puede escribir el modelo solo ha podido cambiarlo el código de las comprobaciones.
+      ["tocando los scripts del worker y package.json", (wt: string) => {
+        writeFileSync(join(temp, "comprobaciones"), "verde\n");
+        escribir(wt, "src/prestamos/index.ts", "export const x = 1;\n");
+        escribir(wt, ".github/diverger/worker-modelo.sh", "true\n");
+        escribir(wt, "package.json", "{}\n");
+      }, "El worker ha cambiado rutas fuera de src/, web/ y app/contextos.ts: .github/diverger/worker-modelo.sh package.json"],
+      ["con un fichero que empieza por src pero no está en src/", (wt: string) => {
+        writeFileSync(join(temp, "comprobaciones"), "verde\n");
+        escribir(wt, "srcx/a.ts", "x\n");
+      }, "El worker ha cambiado rutas fuera de src/, web/ y app/contextos.ts: srcx/a.ts"],
     ])("rechaza el resultado %s", (_caso, cambio, motivo) => {
       expect(ejecutar("Crear el worktree").codigo).toBe(0);
       cambio(valor("WORKTREE"));
@@ -745,50 +772,6 @@ echo "{\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"num_turns\\":3,\\"tot
     expect(r.motivo).toBe(`No está el plugin diverger-dev en ${join(dir, "no-existe")}`);
     expect(existsSync(join(temp, "args-claude"))).toBe(false);
   });
-
-  describe("comprobaciones", () => {
-    const GITDIR = "gitdir: /home/runner/work/app/app/.git/worktrees/worktree";
-
-    beforeEach(() => {
-      entorno.IMAGEN_COMPROBACIONES = "node:22@sha256:0";
-      writeFileSync(join(worktree, ".git"), `${GITDIR}\n`);
-      // docker de mentira: guarda sus argumentos y hace lo peor que podría hacer el código del modelo en el
-      // worktree, que es lo único que ve: cambiar su .git para que el git de los pasos siguientes use otro repositorio.
-      falso("docker", `printf '%s\\n' "$@" > "$RUNNER_TEMP/args-docker"
-rm -f "$WORKTREE/.git"; mkdir -p "$WORKTREE/.git/hooks"
-echo "salida de npm run check"
-exit \${CODIGO_DOCKER:-0}`);
-    });
-
-    it("corren en el contenedor, sin ninguna variable del job, y dejan verde o rojo", () => {
-      const verde = script(SCRIPT_COMPROBAR, "1", { ANTHROPIC_API_KEY: "sk-prueba", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "oidc" });
-      expect(verde.codigo).toBe(0);
-      expect(readFileSync(join(temp, "comprobaciones"), "utf8").trim()).toBe("verde");
-      const args = readFileSync(join(temp, "args-docker"), "utf8");
-      expect(args).toContain(`${worktree}:/trabajo\n`);
-      expect(args).toContain("node:22@sha256:0\n");
-      expect(args).not.toMatch(/sk-prueba|oidc|ANTHROPIC|ACTIONS_ID_TOKEN|RUNNER_TEMP|GITHUB_/);
-      expect(readFileSync(join(temp, "comprobaciones-1.log"), "utf8")).toBe("salida de npm run check\n");
-
-      const rojo = script(SCRIPT_COMPROBAR, "2", { CODIGO_DOCKER: "1" });
-      expect(rojo.codigo).toBe(1);
-      expect(readFileSync(join(temp, "comprobaciones"), "utf8").trim()).toBe("rojo");
-      expect(existsSync(join(temp, "comprobaciones-2.log"))).toBe(true);
-    });
-
-    it("reponen el .git del worktree aunque el contenedor lo cambie", () => {
-      for (const codigo of ["0", "1"]) {
-        script(SCRIPT_COMPROBAR, "1", { CODIGO_DOCKER: codigo });
-        expect(readFileSync(join(worktree, ".git"), "utf8")).toBe(`${GITDIR}\n`);
-      }
-    });
-
-    it("sin la imagen o sin el worktree no ejecutan nada", () => {
-      expect(script(SCRIPT_COMPROBAR, "1", { IMAGEN_COMPROBACIONES: "" }).codigo).toBe(2);
-      expect(script(SCRIPT_COMPROBAR, "1", { WORKTREE: join(dir, "no-existe") }).codigo).toBe(2);
-      expect(existsSync(join(temp, "args-docker"))).toBe(false);
-    });
-  });
 });
 
 // El paso del commit, con la API de GitHub de mentira y un gh de mentira (EN-OPS-06): el commit dice
@@ -862,5 +845,120 @@ describe.skipIf(!HAY_JQ || !HAY_GIT)("commit del worker con quien lo lanzó", ()
     expect(r.codigo).not.toBe(0);
     expect(r.motivo).toContain("No se sabe quién lanzó la ejecución: La ejecución 800 la lanzó diverger-harness[bot], que no es una persona");
     expect(spawnSync("git", ["rev-parse", "HEAD"], { cwd: worktree }).status).not.toBe(0);
+  });
+});
+
+// harness#81: worker-comprobar.sh con un docker falso que hace lo que podría hacer el código del modelo dentro del
+// contenedor: cambiar el fichero .git del worktree y package.json, y dejar ficheros fuera de src/.
+const DOCKER_FALSO = `#!/usr/bin/env bash
+echo "$*" >> "$REGISTRO"
+[ "$1" = run ] || exit 0
+wt=""; prev=""
+for a in "$@"; do [ "$prev" = -v ] && wt="\${a%%:/trabajo}"; prev="$a"; done
+orden="\${*: -1}"
+case "$orden" in
+  *"npm ci"*) echo "package.json al instalar: $(cat "$wt/package.json")" >> "$REGISTRO"; mkdir -p "$wt/node_modules" ;;
+  *"npm run check"*)
+    printf 'gitdir: /tmp/repositorio-malo\n' > "$wt/.git"
+    printf '{"scripts":{"check":"true"}}\n' > "$wt/package.json"
+    mkdir -p "$wt/scripts" && echo malo > "$wt/scripts/nuevo.mjs"
+    echo "export const y = 2;" > "$wt/src/nuevo.ts"
+    echo "::error::orden del modelo"
+    exit "\${CODIGO_CHECK:-0}" ;;
+esac
+`;
+
+describe.skipIf(!HAY_BASH || !HAY_GIT)("comprobaciones del worker en su contenedor (harness#81)", () => {
+  let registro = "";
+  let gitdir = "";
+
+  beforeEach(() => {
+    git("init", "-q", "-b", "main");
+    escribir(repo, FICHERO, TAREA_PENDIENTE);
+    escribir(repo, "package.json", '{"scripts":{"check":"vitest run"}}\n');
+    escribir(repo, "src/index.ts", "export {};\n");
+    git("add", "-A");
+    git("-c", "user.name=prueba", "-c", "user.email=prueba@example.com", "commit", "-qm", "inicio");
+    expect(ejecutar("Comprobar las entradas").codigo).toBe(0);
+    cargarGithubEnv();
+    expect(ejecutar("Crear el worktree").codigo).toBe(0);
+    gitdir = readFileSync(join(valor("WORKTREE"), ".git"), "utf8");
+    const bin = join(dir, "bin");
+    escribir(bin, "docker", DOCKER_FALSO);
+    spawnSync("chmod", ["+x", join(bin, "docker")]);
+    registro = join(temp, "docker.log");
+    entorno.PATH = `${bin}:${process.env.PATH ?? ""}`;
+    entorno.REGISTRO = registro;
+    entorno.IMAGEN_COMPROBACIONES = "node:22";
+  });
+
+  function comprobar(intento: number, extra: Record<string, string> = {}): { codigo: number | null; salida: string } {
+    const r = spawnSync("bash", [SCRIPT_COMPROBAR, String(intento)], {
+      cwd: repo, encoding: "utf8", env: { ...process.env, ...entorno, ...extra },
+    });
+    return { codigo: r.status, salida: r.stdout + r.stderr };
+  }
+
+  it("instala con red y comprueba sin red, con un contenedor con nombre", () => {
+    expect(comprobar(1).codigo).toBe(0);
+    const ordenes = readFileSync(registro, "utf8").split("\n").filter((l) => l.startsWith("run "));
+    expect(ordenes).toHaveLength(2);
+    expect(ordenes[0]).toMatch(/--name comprobaciones-1-\d+ .*--network bridge .*npm ci/);
+    expect(ordenes[1]).toMatch(/--name comprobaciones-1-\d+ .*--network none .*npm run check/);
+  });
+
+  it("repone .git, deshace lo de fuera de src/ y deja lo de src/", () => {
+    expect(comprobar(1).codigo).toBe(0);
+    const wt = valor("WORKTREE");
+    expect(readFileSync(join(wt, ".git"), "utf8")).toBe(gitdir);
+    expect(readFileSync(join(wt, "package.json"), "utf8")).toBe('{"scripts":{"check":"vitest run"}}\n');
+    expect(existsSync(join(wt, "scripts", "nuevo.mjs"))).toBe(false);
+    expect(readFileSync(join(wt, "src", "nuevo.ts"), "utf8")).toBe("export const y = 2;\n");
+  });
+
+  it("antes de instalar deshace lo que un intento anterior dejó fuera de src/, y repone .git desde el primero", () => {
+    const wt = valor("WORKTREE");
+    expect(comprobar(1).codigo).toBe(0);
+    // Como si el paso anterior hubiera muerto antes de reponer nada.
+    writeFileSync(join(wt, ".git"), "gitdir: /tmp/repositorio-malo\n");
+    writeFileSync(join(wt, "package.json"), '{"scripts":{"postinstall":"curl x"}}\n');
+    rmSync(join(wt, "node_modules"), { recursive: true, force: true });
+    expect(comprobar(2).codigo).toBe(0);
+    expect(readFileSync(registro, "utf8")).toContain('package.json al instalar: {"scripts":{"check":"vitest run"}}');
+    expect(readFileSync(registro, "utf8")).not.toContain("postinstall");
+    expect(readFileSync(join(wt, ".git"), "utf8")).toBe(gitdir);
+  });
+
+  it("el contenedor no recibe ninguna variable del job", () => {
+    expect(comprobar(1, { ANTHROPIC_API_KEY: "sk-prueba", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "oidc" }).codigo).toBe(0);
+    const registrado = readFileSync(registro, "utf8");
+    expect(registrado).toContain(`${valor("WORKTREE")}:/trabajo`);
+    expect(registrado).not.toMatch(/sk-prueba|oidc|ANTHROPIC|ACTIONS_ID_TOKEN|RUNNER_TEMP|GITHUB_/);
+  });
+
+  it("sin la imagen o sin el worktree no ejecutan nada", () => {
+    expect(comprobar(1, { IMAGEN_COMPROBACIONES: "" }).codigo).toBe(2);
+    expect(comprobar(1, { WORKTREE: join(dir, "no-existe") }).codigo).toBe(2);
+    expect(existsSync(registro)).toBe(false);
+  });
+
+  it("si no puede deshacer lo de fuera de src/, no ejecuta nada", () => {
+    writeFileSync(join(valor("WORKTREE"), ".git"), "gitdir: /no/existe\n");
+    const r = comprobar(1);
+    expect(r.codigo).toBe(2);
+    expect(r.salida).toContain("No se puede deshacer");
+    expect(readFileSync(registro, "utf8")).not.toMatch(/^run /m);
+  });
+
+  it("en rojo imprime el final del log sin órdenes de workflow", () => {
+    const r = comprobar(1, { CODIGO_CHECK: "1" });
+    expect(r.codigo).toBe(1);
+    expect(readFileSync(join(temp, "comprobaciones"), "utf8").trim()).toBe("rojo");
+    const fin = /::stop-commands::([0-9a-f]{32})/.exec(r.salida)?.[1];
+    expect(fin).toBeDefined();
+    const i = r.salida.indexOf("::error::orden del modelo");
+    expect(i).toBeGreaterThan(r.salida.indexOf("::stop-commands::"));
+    expect(i).toBeLessThan(r.salida.indexOf(`::${fin}::`));
+    expect(readFileSync(join(valor("WORKTREE"), ".git"), "utf8")).toBe(gitdir);
   });
 });
