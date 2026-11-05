@@ -125,6 +125,7 @@ jobs:
           echo "FICHERO_TAREA=.diverger/$INICIATIVA/tasks/$TAREA.json" >> "$GITHUB_ENV"
           echo "WORKTREE=$RUNNER_TEMP/worktree" >> "$GITHUB_ENV"
           echo "PLUGIN_DEV=$GITHUB_WORKSPACE/.diverger-dev/plugins/diverger-dev" >> "$GITHUB_ENV"
+          echo "PLUGIN_QUALITY=$GITHUB_WORKSPACE/.diverger-dev/plugins/diverger-quality" >> "$GITHUB_ENV"
 
       # Sin credenciales guardadas en .git: ni el modelo ni lo que deje en el repositorio pueden empujar.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -205,9 +206,9 @@ jobs:
             | sudo tee /etc/claude-code/managed-settings.json >/dev/null
           echo "Telemetría en BigQuery con github.run_id=$GITHUB_RUN_ID"
 
-      # El plugin diverger-dev se descarga del harness, que es privado, con un token de la App que solo
-      # puede leer su contenido. El token se pide y se usa en estos dos pasos, antes del modelo, y no
-      # llega a su entorno; el plugin queda fuera del worktree, donde el modelo no puede escribir.
+      # Los plugins diverger-dev y diverger-quality (el del Auditor de seguridad) se descargan del harness, que es
+      # privado, con un token de la App que solo puede leer su contenido. El token se pide y se usa en estos dos pasos,
+      # antes del modelo, y no llega a su entorno; los plugins quedan fuera del worktree, donde el modelo no puede escribir.
       - name: Token de lectura de diverger-dev
         id: token-dev
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -224,7 +225,9 @@ jobs:
           token: ${{ steps.token-dev.outputs.token }}
           path: .diverger-dev
           persist-credentials: false
-          sparse-checkout: plugins/diverger-dev
+          sparse-checkout: |
+            plugins/diverger-dev
+            plugins/diverger-quality
 
       # Tres intentos como mucho. En cada uno, el modelo trabaja (worker-modelo.sh) y después el job
       # ejecuta las comprobaciones en otro paso, sin la clave de Anthropic (worker-comprobar.sh). Los
@@ -278,13 +281,32 @@ jobs:
         continue-on-error: true
         timeout-minutes: 15
         run: bash .github/diverger/worker-comprobar.sh 1
+      # El Auditor de seguridad revisa el cambio si las comprobaciones están en verde (HU-CAL-01 del harness, ADR 0040).
+      # Con «bloquear» sale con 1 y se lanza el intento siguiente con su explotación; sin veredicto, la tarea no pasa.
+      - name: Auditor de seguridad
+        id: auditor-1
+        if: steps.comprobaciones-1.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          GASTADO: ${{ steps.worker-1.outputs.coste }}
+          COSTES_AUDITOR: ""
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+          TOPE_JOB: ${{ steps.tope.outputs.tope }}
+          CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+          BASH_ENV: ""
+          ENV: ""
+        working-directory: ${{ env.WORKTREE }}
+        run: bash "$GITHUB_WORKSPACE/.github/diverger/worker-auditor.sh" 1
 
       - name: Worker, intento 2
         id: worker-2
-        if: steps.comprobaciones-1.outcome == 'failure'
+        if: steps.comprobaciones-1.outcome == 'failure' || steps.auditor-1.outputs.veredicto == 'bloquear'
         timeout-minutes: 20
         env:
           GASTADO: ${{ steps.worker-1.outputs.coste }}
+          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }}"
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
           TOPE_JOB: ${{ steps.tope.outputs.tope }}
@@ -295,17 +317,36 @@ jobs:
         run: bash "$GITHUB_WORKSPACE/.github/diverger/worker-modelo.sh" 2
       - name: Comprobaciones, intento 2
         id: comprobaciones-2
-        if: steps.comprobaciones-1.outcome == 'failure'
+        if: steps.comprobaciones-1.outcome == 'failure' || steps.auditor-1.outputs.veredicto == 'bloquear'
         continue-on-error: true
         timeout-minutes: 15
         run: bash .github/diverger/worker-comprobar.sh 2
+      # El Auditor de seguridad revisa el cambio si las comprobaciones están en verde (HU-CAL-01 del harness, ADR 0040).
+      # Con «bloquear» sale con 1 y se lanza el intento siguiente con su explotación; sin veredicto, la tarea no pasa.
+      - name: Auditor de seguridad, intento 2
+        id: auditor-2
+        if: steps.comprobaciones-2.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          GASTADO: ${{ steps.worker-2.outputs.coste }}
+          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }}"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+          TOPE_JOB: ${{ steps.tope.outputs.tope }}
+          CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+          BASH_ENV: ""
+          ENV: ""
+        working-directory: ${{ env.WORKTREE }}
+        run: bash "$GITHUB_WORKSPACE/.github/diverger/worker-auditor.sh" 2
 
       - name: Worker, intento 3
         id: worker-3
-        if: steps.comprobaciones-2.outcome == 'failure'
+        if: steps.comprobaciones-2.outcome == 'failure' || steps.auditor-2.outputs.veredicto == 'bloquear'
         timeout-minutes: 20
         env:
           GASTADO: ${{ steps.worker-2.outputs.coste || steps.worker-1.outputs.coste }}
+          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }} ${{ steps.auditor-2.outputs.coste }}"
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
           TOPE_JOB: ${{ steps.tope.outputs.tope }}
@@ -316,10 +357,28 @@ jobs:
         run: bash "$GITHUB_WORKSPACE/.github/diverger/worker-modelo.sh" 3
       - name: Comprobaciones, intento 3
         id: comprobaciones-3
-        if: steps.comprobaciones-2.outcome == 'failure'
+        if: steps.comprobaciones-2.outcome == 'failure' || steps.auditor-2.outputs.veredicto == 'bloquear'
         continue-on-error: true
         timeout-minutes: 15
         run: bash .github/diverger/worker-comprobar.sh 3
+      # El Auditor de seguridad revisa el cambio si las comprobaciones están en verde (HU-CAL-01 del harness, ADR 0040).
+      # Con «bloquear» sale con 1 y se lanza el intento siguiente con su explotación; sin veredicto, la tarea no pasa.
+      - name: Auditor de seguridad, intento 3
+        id: auditor-3
+        if: steps.comprobaciones-3.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          GASTADO: ${{ steps.worker-3.outputs.coste }}
+          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }} ${{ steps.auditor-2.outputs.coste }}"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+          TOPE_JOB: ${{ steps.tope.outputs.tope }}
+          CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+          BASH_ENV: ""
+          ENV: ""
+        working-directory: ${{ env.WORKTREE }}
+        run: bash "$GITHUB_WORKSPACE/.github/diverger/worker-auditor.sh" 3
 
       # Lo que el job acepta del worker: comprobaciones en verde, algún cambio y ninguno en el plan ni en los
       # workflows. Entonces es el job, no el modelo, quien marca la tarea como hecha. Sin cambios solo se acepta si el
@@ -329,8 +388,14 @@ jobs:
         working-directory: ${{ env.WORKTREE }}
         run: |
           fallar() { printf '%s\n' "$1" > "$RUNNER_TEMP/motivo"; echo "::error::$1"; exit 1; }
+          # El veredicto del Auditor de seguridad del último intento (worker-modelo.sh lo borra al empezar cada uno).
+          auditor=$(cat "$RUNNER_TEMP/auditor" 2>/dev/null || echo ninguno)
+          [ "$auditor" != bloquear ] \
+            || fallar "El Auditor de seguridad sigue bloqueando el cambio después de 3 intentos: hay un fallo explotable"
           [ "$(cat "$RUNNER_TEMP/comprobaciones" 2>/dev/null)" = verde ] \
             || fallar "Las comprobaciones (npm run check) siguen en rojo después de 3 intentos"
+          [ "$auditor" = comentar ] \
+            || fallar "Sin veredicto del Auditor de seguridad: $(cat "$RUNNER_TEMP/motivo-auditor" 2>/dev/null || echo "no se ha ejecutado")"
           git add -A
           if git diff --cached --quiet; then
             [ -s "$RUNNER_TEMP/cubierta" ] || fallar "El worker no ha cambiado nada"
@@ -419,6 +484,11 @@ jobs:
             jq -rs --arg modelo "$MODELO" \
               '"Coste del worker: \(map(.total_cost_usd // 0) | max) USD en \(map(.num_turns // 0) | add) turnos y \(length) intentos (modelo `\($modelo)`). Comprobaciones (npm run check) en verde."' \
               "$RUNNER_TEMP"/salida-*.json
+            ultimo=$(ls "$RUNNER_TEMP"/auditor-*.md 2>/dev/null | sort | tail -n 1)
+            if [ -n "$ultimo" ]; then
+              echo
+              cat "$ultimo"
+            fi
           } > "$RUNNER_TEMP/pr.md"
           url=$(gh pr create -R "$repo" --base "$GITHUB_REF_NAME" --head "$RAMA" \
             --title "[$TAREA] $titulo" --body-file "$RUNNER_TEMP/pr.md") || fallar "No se ha podido abrir la PR desde $RAMA"
@@ -454,6 +524,10 @@ jobs:
               tail -n 60 "$ultimo"
               echo '```'
             fi
+            if [ "$(cat "$RUNNER_TEMP/auditor" 2>/dev/null)" = bloquear ]; then
+              echo
+              cat "$(ls "$RUNNER_TEMP"/auditor-*.md | sort | tail -n 1)"
+            fi
             if [ -s "$RUNNER_TEMP/salida.json" ]; then
               echo
               echo "**Final de la respuesta del modelo:**"
@@ -473,7 +547,7 @@ jobs:
           retention-days: 30
 
       # El coste para el bucle: también si el job falla o se cancela. Sin artefacto, cuenta el tope entero. Sale de
-      # las salidas de los pasos del modelo, que el código de las comprobaciones no puede cambiar.
+      # las salidas de los pasos del modelo y del Auditor, que el código de las comprobaciones no puede cambiar.
       - name: Coste del job
         if: always()
         env:
@@ -481,6 +555,10 @@ jobs:
             ${{ steps.worker-1.outcome }}:${{ steps.worker-1.outputs.coste }}
             ${{ steps.worker-2.outcome }}:${{ steps.worker-2.outputs.coste }}
             ${{ steps.worker-3.outcome }}:${{ steps.worker-3.outputs.coste }}
+          AUDITORES: >-
+            ${{ steps.auditor-1.outcome }}:${{ steps.auditor-1.outputs.coste }}
+            ${{ steps.auditor-2.outcome }}:${{ steps.auditor-2.outputs.coste }}
+            ${{ steps.auditor-3.outcome }}:${{ steps.auditor-3.outputs.coste }}
         run: bash .github/diverger/worker-coste.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
