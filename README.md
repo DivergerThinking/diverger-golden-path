@@ -152,7 +152,7 @@ Necesita, en el repositorio de la aplicación, el secreto `ANTHROPIC_API_KEY`, l
 | `firestore.indexes.json` | Los índices compuestos, en el formato de Firebase. La plantilla no trae ninguno: los añade el arquitecto cuando una consulta los pide |
 | `artifact_registry.tf` | El repositorio de imágenes, que conserva las 10 versiones más recientes y borra las imágenes sin etiqueta de más de 7 días |
 | `cloud_deploy.tf` | La cadena de Cloud Deploy de la aplicación, con un único destino: su Cloud Run de staging. Cloud Deploy despliega con su propia cuenta (`cuenta_cloud_deploy`) y guarda lo que genera en el almacén del proyecto (`almacen_cloud_deploy`) |
-| `staging.tfvars` y `staging.gcs.tfbackend` | Los valores de staging en el proyecto de pruebas y dónde se guarda su estado. Una aplicación nueva cambia `aplicacion` y el prefijo por su nombre |
+| `staging.tfvars` y `staging.gcs.tfbackend` | Los valores de staging en el proyecto de pruebas y dónde se guarda su estado. Una aplicación nueva cambia `aplicacion` y el prefijo por su nombre y puede añadir sus propias variables de entorno en `variables_entorno`, por ejemplo `variables_entorno = { CORREOS_IT = "ana@empresa.com" }`. No son secretos y no pueden cambiar `FIRESTORE_DATABASE`, `GOOGLE_CLIENT_ID` ni `PORT` |
 
 La imagen del servicio es del despliegue continuo: la infraestructura crea el servicio con una imagen de ejemplo de Google y no vuelve a tocarla. El despliegue solo cambia la imagen (ver *Despliegue en staging*); cualquier otro cambio en el servicio se hace en `infra/`.
 
