@@ -281,7 +281,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 15
         run: bash .github/diverger/worker-comprobar.sh 1
-      # El Auditor de seguridad revisa el cambio si las comprobaciones están en verde (HU-CAL-01 del harness, ADR 0039).
+      # El Auditor de seguridad revisa el cambio si las comprobaciones están en verde (HU-CAL-01 del harness, ADR 0040).
       # Con «bloquear» sale con 1 y se lanza el intento siguiente con su explotación; sin veredicto, la tarea no pasa.
       - name: Auditor de seguridad
         id: auditor-1
@@ -321,7 +321,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 15
         run: bash .github/diverger/worker-comprobar.sh 2
-      # El Auditor de seguridad revisa el cambio si las comprobaciones están en verde (HU-CAL-01 del harness, ADR 0039).
+      # El Auditor de seguridad revisa el cambio si las comprobaciones están en verde (HU-CAL-01 del harness, ADR 0040).
       # Con «bloquear» sale con 1 y se lanza el intento siguiente con su explotación; sin veredicto, la tarea no pasa.
       - name: Auditor de seguridad, intento 2
         id: auditor-2
@@ -361,7 +361,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 15
         run: bash .github/diverger/worker-comprobar.sh 3
-      # El Auditor de seguridad revisa el cambio si las comprobaciones están en verde (HU-CAL-01 del harness, ADR 0039).
+      # El Auditor de seguridad revisa el cambio si las comprobaciones están en verde (HU-CAL-01 del harness, ADR 0040).
       # Con «bloquear» sale con 1 y se lanza el intento siguiente con su explotación; sin veredicto, la tarea no pasa.
       - name: Auditor de seguridad, intento 3
         id: auditor-3

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# El Auditor de seguridad revisa el cambio de un intento del worker (HU-CAL-01 del harness, ADR 0039). Se ejecuta
+# El Auditor de seguridad revisa el cambio de un intento del worker (HU-CAL-01 del harness, ADR 0040). Se ejecuta
 # desde el checkout de la rama base, que el modelo no puede cambiar, después de unas comprobaciones en verde.
 #
 # Uso: worker-auditor.sh <intento>
