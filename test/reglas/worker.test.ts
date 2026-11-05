@@ -18,6 +18,7 @@ const SIN_COMENTARIOS = TEXTO.split("\n").filter((linea) => !linea.trimStart().s
 const SCRIPT_MODELO = join(RAIZ, ".github", "diverger", "worker-modelo.sh");
 const SCRIPT_COMPROBAR = join(RAIZ, ".github", "diverger", "worker-comprobar.sh");
 const SCRIPT_COSTE = join(RAIZ, ".github", "diverger", "worker-coste.sh");
+const SCRIPT_AUDITOR = join(RAIZ, ".github", "diverger", "worker-auditor.sh");
 const MODELO_SH = readFileSync(SCRIPT_MODELO, "utf8");
 
 interface Paso {
@@ -114,7 +115,7 @@ describe("forma del workflow del worker", () => {
       token: "${{ steps.token-dev.outputs.token }}",
       path: ".diverger-dev",
       "persist-credentials": false,
-      "sparse-checkout": "plugins/diverger-dev",
+      "sparse-checkout": "plugins/diverger-dev\nplugins/diverger-quality\n",
     });
     expect(indice("token-dev")).toBeLessThan(indice("Worker"));
     // El token de lectura solo lo usa la descarga: ningún otro paso lo cita.
@@ -128,7 +129,7 @@ describe("forma del workflow del worker", () => {
 
   it("el modelo solo recibe la clave de Anthropic, ningún token de GitHub", () => {
     for (const nombre of ["Worker", "Worker, intento 2", "Worker, intento 3"]) {
-      expect(Object.keys(paso(nombre).env ?? {}).filter((clave) => clave !== "GASTADO").sort())
+      expect(Object.keys(paso(nombre).env ?? {}).filter((clave) => clave !== "GASTADO" && clave !== "COSTES_AUDITOR").sort())
         .toEqual(["ANTHROPIC_API_KEY", "BASH_ENV", "CLAUDE_BIN", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "ENV", "TOPE_JOB"]);
       expect(paso(nombre).run).toMatch(/^bash "\$GITHUB_WORKSPACE\/\.github\/diverger\/worker-modelo\.sh" [123]$/);
     }
@@ -139,7 +140,8 @@ describe("forma del workflow del worker", () => {
 
   it("las comprobaciones las ejecuta el job, sin la clave de Anthropic, y hay tres intentos como mucho", () => {
     const conClave = PASOS.filter((p) => JSON.stringify(p.env ?? {}).includes("ANTHROPIC_API_KEY")).map((p) => p.name);
-    expect(conClave).toEqual(["Worker", "Worker, intento 2", "Worker, intento 3"]);
+    expect(conClave).toEqual(["Worker", "Auditor de seguridad", "Worker, intento 2", "Auditor de seguridad, intento 2",
+      "Worker, intento 3", "Auditor de seguridad, intento 3"]);
     for (const n of [1, 2, 3]) {
       const comprobaciones = paso(`comprobaciones-${n}`);
       expect(comprobaciones.env).toBeUndefined();
@@ -147,11 +149,32 @@ describe("forma del workflow del worker", () => {
       expect(comprobaciones.run).toBe(`bash .github/diverger/worker-comprobar.sh ${n}`);
       expect(indice(`comprobaciones-${n}`)).toBe(indice(n === 1 ? "Worker" : `Worker, intento ${n}`) + 1);
     }
-    expect(paso("Worker, intento 2").if).toBe("steps.comprobaciones-1.outcome == 'failure'");
-    expect(paso("comprobaciones-2").if).toBe("steps.comprobaciones-1.outcome == 'failure'");
-    expect(paso("Worker, intento 3").if).toBe("steps.comprobaciones-2.outcome == 'failure'");
-    expect(paso("comprobaciones-3").if).toBe("steps.comprobaciones-2.outcome == 'failure'");
+    const otro = (n: number) => `steps.comprobaciones-${n}.outcome == 'failure' || steps.auditor-${n}.outputs.veredicto == 'bloquear'`;
+    expect(paso("Worker, intento 2").if).toBe(otro(1));
+    expect(paso("comprobaciones-2").if).toBe(otro(1));
+    expect(paso("Worker, intento 3").if).toBe(otro(2));
+    expect(paso("comprobaciones-3").if).toBe(otro(2));
     expect(PASOS.filter((p) => p.name?.startsWith("Worker"))).toHaveLength(3);
+  });
+
+  it("el Auditor de seguridad revisa cada intento con las comprobaciones en verde, solo leyendo (HU-CAL-01)", () => {
+    for (const n of [1, 2, 3]) {
+      const auditor = paso(`auditor-${n}`);
+      expect(indice(`auditor-${n}`)).toBe(indice(`comprobaciones-${n}`) + 1);
+      expect(auditor.if).toBe(`steps.comprobaciones-${n}.outcome == 'success'`);
+      expect(auditor["continue-on-error"]).toBe(true);
+      expect(auditor.run).toBe(`bash "$GITHUB_WORKSPACE/.github/diverger/worker-auditor.sh" ${n}`);
+      expect(auditor["working-directory"]).toBe("${{ env.WORKTREE }}");
+      expect(auditor.env).toMatchObject({ GASTADO: `\${{ steps.worker-${n}.outputs.coste }}`, CLAUDE_BIN: "${{ steps.claude.outputs.bin }}", BASH_ENV: "", ENV: "" });
+      expect(JSON.stringify(auditor.env)).not.toMatch(/token|GH_TOKEN|GITHUB_TOKEN/i);
+    }
+    const auditor = readFileSync(SCRIPT_AUDITOR, "utf8");
+    expect(auditor).toContain("--agent diverger-quality:auditor-seguridad --plugin-dir \"$PLUGIN_QUALITY\"");
+    expect(auditor).toContain('--permission-mode dontAsk --tools "Read,Glob,Grep"');
+    expect(auditor).toContain("--setting-sources user --strict-mcp-config");
+    expect(auditor).not.toMatch(/dangerously|bypassPermissions|acceptEdits|Bash|Edit|Write/);
+    // El coste del job suma el de los Auditores.
+    expect(paso("Coste del job").env?.AUDITORES).toContain("steps.auditor-3.outputs.coste");
   });
 
   it("el worker corre en dontAsk, sin Bash y escribiendo solo src/, web/ y app/contextos.ts", () => {
@@ -555,6 +578,7 @@ describe.skipIf(!HAY_BASH || !HAY_GIT)("worktree del worker", () => {
     it("con las comprobaciones en verde, el job marca la tarea como hecha", () => {
       expect(ejecutar("Crear el worktree").codigo).toBe(0);
       writeFileSync(join(temp, "comprobaciones"), "verde\n");
+      writeFileSync(join(temp, "auditor"), "comentar\n");
       escribir(valor("WORKTREE"), "src/prestamos/index.ts", "export const x = 1;\n");
       const r = ejecutar("Comprobar el resultado");
       expect(r.motivo).toBe("");
@@ -567,26 +591,42 @@ describe.skipIf(!HAY_BASH || !HAY_GIT)("worktree del worker", () => {
         writeFileSync(join(temp, "comprobaciones"), "rojo\n");
         escribir(wt, "src/prestamos/index.ts", "x\n");
       }, "Las comprobaciones (npm run check) siguen en rojo después de 3 intentos"],
+      ["con el Auditor de seguridad bloqueando en el último intento", (wt: string) => {
+        writeFileSync(join(temp, "comprobaciones"), "rojo\n");
+        writeFileSync(join(temp, "auditor"), "bloquear\n");
+        escribir(wt, "src/prestamos/index.ts", "x\n");
+      }, "El Auditor de seguridad sigue bloqueando el cambio después de 3 intentos: hay un fallo explotable"],
+      ["sin veredicto del Auditor de seguridad", (wt: string) => {
+        writeFileSync(join(temp, "comprobaciones"), "verde\n");
+        writeFileSync(join(temp, "auditor"), "ninguno\n");
+        writeFileSync(join(temp, "motivo-auditor"), "El Auditor de seguridad no ha respondido con su JSON en el intento 1\n");
+        escribir(wt, "src/prestamos/index.ts", "x\n");
+      }, "Sin veredicto del Auditor de seguridad: El Auditor de seguridad no ha respondido con su JSON en el intento 1"],
       ["sin cambios", () => {
         writeFileSync(join(temp, "comprobaciones"), "verde\n");
+        writeFileSync(join(temp, "auditor"), "comentar\n");
       }, "El worker no ha cambiado nada"],
       ["cambiando el plan", (wt: string) => {
         writeFileSync(join(temp, "comprobaciones"), "verde\n");
+        writeFileSync(join(temp, "auditor"), "comentar\n");
         escribir(wt, ".diverger/demo/tasks/TA-002.json", { ...TAREA_PENDIENTE, id: "TA-002", status: "done" });
       }, "El worker ha cambiado el plan: .diverger/demo/tasks/TA-002.json"],
       ["tocando los workflows", (wt: string) => {
         writeFileSync(join(temp, "comprobaciones"), "verde\n");
+        writeFileSync(join(temp, "auditor"), "comentar\n");
         escribir(wt, ".github/workflows/otro.yml", "on: push\n");
       }, "El worker ha cambiado rutas fuera de src/, web/ y app/contextos.ts: .github/workflows/otro.yml"],
       // harness#81: lo que no puede escribir el modelo solo ha podido cambiarlo el código de las comprobaciones.
       ["tocando los scripts del worker y package.json", (wt: string) => {
         writeFileSync(join(temp, "comprobaciones"), "verde\n");
+        writeFileSync(join(temp, "auditor"), "comentar\n");
         escribir(wt, "src/prestamos/index.ts", "export const x = 1;\n");
         escribir(wt, ".github/diverger/worker-modelo.sh", "true\n");
         escribir(wt, "package.json", "{}\n");
       }, "El worker ha cambiado rutas fuera de src/, web/ y app/contextos.ts: .github/diverger/worker-modelo.sh package.json"],
       ["con un fichero que empieza por src pero no está en src/", (wt: string) => {
         writeFileSync(join(temp, "comprobaciones"), "verde\n");
+        writeFileSync(join(temp, "auditor"), "comentar\n");
         escribir(wt, "srcx/a.ts", "x\n");
       }, "El worker ha cambiado rutas fuera de src/, web/ y app/contextos.ts: srcx/a.ts"],
     ])("rechaza el resultado %s", (_caso, cambio, motivo) => {
@@ -732,6 +772,141 @@ echo "{\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"num_turns\\":3,\\"tot
     expect(ejecutar("Tope del job", { MAX_USD: maxUsd, GITHUB_OUTPUT: salidaPaso }).codigo).toBe(0);
     expect(readFileSync(salidaPaso, "utf8")).toBe(`tope=${tope}\n`);
     expect(readFileSync(valor("GITHUB_ENV"), "utf8")).toBe("");
+  });
+
+  it.each([
+    ["suma los Auditores de seguridad al mayor coste del worker", "success:0.5 failure:0.7 skipped:", "success:0.04 failure:0.06 skipped:", 0.8],
+    ["nada si un Auditor lanzado no dejó coste: el bucle cuenta el tope entero", "success:0.5 skipped: skipped:", "failure: skipped: skipped:", undefined],
+  ])("coste.json %s (HU-CAL-01)", (_caso, intentos, auditores, coste) => {
+    expect(script(SCRIPT_COSTE, "", { INTENTOS: intentos, AUDITORES: auditores }).codigo).toBe(0);
+    const fichero = join(temp, "coste", "coste.json");
+    if (coste === undefined) expect(existsSync(fichero)).toBe(false);
+    else expect((JSON.parse(readFileSync(fichero, "utf8")) as { costUsd: number }).costUsd).toBeCloseTo(coste, 6);
+  });
+
+  it("lo que gastaron los Auditores cuenta para el margen del intento siguiente (HU-CAL-01)", () => {
+    const r = script(SCRIPT_MODELO, "3", { TOPE_JOB: "10.00", GASTADO: "9.3", COSTES_AUDITOR: "0.2 0.1" });
+    expect(r.codigo).toBe(1);
+    expect(r.motivo).toBe("El worker ha gastado 9.6 USD de su tope de 10.00 USD: no queda margen para otro intento");
+    expect(existsSync(join(temp, "args-claude"))).toBe(false);
+  });
+
+  it("si el Auditor bloqueó el intento anterior, el siguiente recibe su explotación y no el log de las comprobaciones (HU-CAL-01)", () => {
+    writeFileSync(join(temp, "salida-1.json"), JSON.stringify({ session_id: "s-1" }));
+    writeFileSync(join(temp, "comprobaciones-1.log"), "Todos los tests en verde\n");
+    writeFileSync(join(temp, "veredicto-1"), "bloquear\n");
+    writeFileSync(join(temp, "auditor-1.md"), "**El Auditor de seguridad bloquea el cambio.**\n- Petición: GET /api/prestamos/P-7\n");
+    writeFileSync(join(temp, "auditor"), "bloquear\n");
+    expect(script(SCRIPT_MODELO, "2").codigo).toBe(0);
+    const args = readFileSync(join(temp, "args-claude"), "utf8");
+    expect(args).toContain("El Auditor de seguridad ha bloqueado tu intento 1");
+    expect(args).toContain("GET /api/prestamos/P-7");
+    expect(args).not.toContain("Todos los tests en verde");
+    // El veredicto del intento anterior ya no vale para este.
+    expect(existsSync(join(temp, "auditor"))).toBe(false);
+  });
+
+  describe("Auditor de seguridad (HU-CAL-01)", () => {
+    function gitWt(...args: string[]): void {
+      const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: worktree, encoding: "utf8" });
+      if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+    }
+
+    function responde(resultado: string): void {
+      writeFileSync(join(temp, "respuesta-claude"), JSON.stringify({ subtype: "success", is_error: false, num_turns: 4,
+        total_cost_usd: 0.04, session_id: "a-1", result: resultado }));
+    }
+
+    function auditar(extra: Record<string, string> = {}) {
+      const salida = join(temp, "github_output");
+      writeFileSync(salida, "");
+      const r = script(SCRIPT_AUDITOR, "1", { GITHUB_OUTPUT: salida, TOPE_JOB: "5.00", GASTADO: "0.5", ...extra });
+      const leer = (n: string) => (existsSync(join(temp, n)) ? readFileSync(join(temp, n), "utf8").trim() : "");
+      return { ...r, veredicto: leer("auditor"), salidas: readFileSync(salida, "utf8"), md: leer("auditor-1.md"),
+        motivoAuditor: leer("motivo-auditor"), comprobaciones: leer("comprobaciones") };
+    }
+
+    const BLOQUEO = { veredicto: "bloquear", comentarios: [], bloqueos: [{ tipo: "autorizacion", fichero: "src/prestamos/rutas.ts", linea: 9,
+      problema: "No mira el dueño.", explotacion: { peticion: "GET /api/prestamos/P-7", sesion: "ana@example.com", resultado: "Recibe el préstamo de luis@example.com." } }] };
+
+    beforeEach(() => {
+      escribir(dir, ".diverger-dev/plugins/diverger-quality/agents/auditor-seguridad.md", "---\nname: auditor-seguridad\n---\n");
+      entorno.PLUGIN_QUALITY = join(dir, ".diverger-dev", "plugins", "diverger-quality");
+      falso("claude", `printf '%s\\n' "$@" > "$RUNNER_TEMP/args-claude"
+cat "$RUNNER_TEMP/respuesta-claude"`);
+      gitWt("init", "-q");
+      escribir(worktree, "src/prestamos/servicio.ts", "export const x = 1;\n");
+      gitWt("add", "-A");
+      gitWt("commit", "-qm", "base");
+      escribir(worktree, "src/prestamos/rutas.ts", "export const rutas = 1;\n");
+      writeFileSync(join(temp, "comprobaciones"), "verde\n");
+    });
+
+    it("con una explotación, bloquea, deja las comprobaciones en rojo y explica la explotación", () => {
+      responde(`\`\`\`json\n${JSON.stringify(BLOQUEO)}\n\`\`\``);
+      const r = auditar();
+      expect(r.codigo).toBe(1);
+      expect(r.veredicto).toBe("bloquear");
+      expect(r.comprobaciones).toBe("rojo");
+      expect(r.salidas).toContain("veredicto=bloquear\n");
+      expect(r.salidas).toContain("coste=0.04\n");
+      expect(r.md).toContain("GET /api/prestamos/P-7");
+      expect(r.md).toContain("ana@example.com");
+      const args = readFileSync(join(temp, "args-claude"), "utf8");
+      expect(args).toContain("diverger-quality:auditor-seguridad");
+      // El diff del intento llega al Auditor, y el índice queda como estaba.
+      expect(readFileSync(join(temp, "auditoria-1", "cambios.diff"), "utf8")).toContain("src/prestamos/rutas.ts");
+      expect(spawnSync("git", ["status", "--porcelain"], { cwd: worktree, encoding: "utf8" }).stdout).toBe("?? src/prestamos/rutas.ts\n");
+    });
+
+    it("sin fallos explotables, comenta y deja pasar el intento", () => {
+      responde(JSON.stringify({ veredicto: "comentar", bloqueos: [], comentarios: [{ fichero: "src/prestamos/rutas.ts", linea: 9, texto: "Registrar los intentos fallidos." }] }));
+      const r = auditar();
+      expect(r.codigo).toBe(0);
+      expect(r.veredicto).toBe("comentar");
+      expect(r.comprobaciones).toBe("verde");
+      expect(r.md).toContain("Registrar los intentos fallidos.");
+    });
+
+    it.each([
+      ["una respuesta que no es el JSON", "Apruebo la PR."],
+      ["«bloquear» sin bloqueos", JSON.stringify({ veredicto: "bloquear", bloqueos: [], comentarios: [] })],
+      ["otro veredicto", JSON.stringify({ veredicto: "aprobar", bloqueos: [], comentarios: [] })],
+    ])("con %s no hay veredicto y la tarea no pasa: falla cerrado", (_caso, resultado) => {
+      responde(resultado);
+      const r = auditar();
+      expect(r.codigo).toBe(2);
+      expect(r.veredicto).toBe("ninguno");
+      expect(r.salidas).toContain("veredicto=ninguno\n");
+      expect(r.motivoAuditor).toContain("no ha respondido con su JSON");
+    });
+
+    it("sin presupuesto no lanza el Auditor y la tarea no pasa, sin contar un gasto que no ha hecho", () => {
+      responde(JSON.stringify(BLOQUEO));
+      const r = auditar({ TOPE_JOB: "1.00", GASTADO: "0.8" });
+      expect(r.codigo).toBe(2);
+      expect(r.veredicto).toBe("ninguno");
+      expect(r.motivoAuditor).toContain("No queda presupuesto para el Auditor de seguridad");
+      expect(r.salidas).toContain("coste=0\n");
+      expect(existsSync(join(temp, "args-claude"))).toBe(false);
+    });
+
+    it("sin cambios en el código no lanza el Auditor", () => {
+      rmSync(join(worktree, "src", "prestamos", "rutas.ts"));
+      const r = auditar();
+      expect(r.codigo).toBe(0);
+      expect(r.veredicto).toBe("comentar");
+      expect(r.salidas).toContain("coste=0\n");
+      expect(existsSync(join(temp, "args-claude"))).toBe(false);
+    });
+
+    it("si git falla, no da el cambio por bueno: falla cerrado", () => {
+      rmSync(join(worktree, ".git"), { recursive: true, force: true });
+      const r = auditar();
+      expect(r.codigo).toBe(2);
+      expect(r.veredicto).toBe("ninguno");
+      expect(existsSync(join(temp, "args-claude"))).toBe(false);
+    });
   });
 
   it("un coste.json que ya estaba no se sube: la carpeta se vacía antes", () => {
