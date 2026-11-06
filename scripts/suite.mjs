@@ -4,7 +4,10 @@
 // del backlog, antes que el código, y la cambia una persona. Una PR es de una tarea si alguno de sus commits
 // lleva el trailer Diverger-Tarea, salvo en las ramas de mantenimiento del kit de evaluación del harness
 // (diverger/reinicio/<número> y diverger/ajustes/<número>, harness#528), que no son tareas: el reinicio borra la
-// suite de la evaluación anterior. La rama llega en PR_RAMA, y el worker rechaza esas dos iniciativas.
+// suite de la evaluación anterior. La rama llega en PR_RAMA, y el worker rechaza esas dos iniciativas. Tampoco es
+// de una tarea la PR del plan de una iniciativa, en plan/<iniciativa> (harness#696): la escribe un agente en la
+// sesión de una persona, con los trailers, y trae la suite que generó generate_features. Los workers nunca usan esa
+// rama: la suya es diverger/<iniciativa>/<tarea>.
 // - Falla si la PR de una tarea cambia, añade, borra o renombra algo de la suite.
 // - En cualquier PR que toque la suite, deja modificada=true en GITHUB_OUTPUT para que el job la etiquete
 //   («suite-modificada»): así se cuenta cada modificación, sea de quien sea.
@@ -25,9 +28,14 @@ export function ficherosDeLaSuite(rango, cwd = process.cwd()) {
   return salida.split("\n").map((linea) => linea.trim()).filter(Boolean);
 }
 
-/** Tareas que nombran los commits (trailer Diverger-Tarea); ninguna en una rama de mantenimiento del harness. */
+/** La rama de la PR del plan de una iniciativa: plan/<iniciativa>, con el nombre en minúsculas y guiones. */
+export function ramaDelPlan(rama) {
+  return /^plan\/[a-z0-9]+(-[a-z0-9]+)*$/.test(rama ?? "");
+}
+
+/** Tareas que nombran los commits (trailer Diverger-Tarea); ninguna en una rama de mantenimiento ni en la del plan. */
 export function tareas(lista, rama = "") {
-  if (ramaDeMantenimiento(rama)) return [];
+  if (ramaDeMantenimiento(rama) || ramaDelPlan(rama)) return [];
   const resultado = new Set();
   for (const commit of lista) {
     for (const tarea of (commit.tarea ?? "").split(",").map((t) => t.trim()).filter(Boolean)) resultado.add(tarea);

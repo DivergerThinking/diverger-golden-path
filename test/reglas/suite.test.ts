@@ -126,6 +126,20 @@ describe.skipIf(!HAY_GIT)("la PR de una tarea y la suite de aceptación", () => 
     expect(comprobar("diverger/nivel-0/EN-GP-06").codigo).toBe(1);
   });
 
+  it("la PR del plan de una iniciativa, en plan/<iniciativa>, no es de una tarea: trae la suite nueva (harness#696)", () => {
+    escribir("tests/aceptacion/prestamo.feature", "# language: es\nCaracterística: Prestar, del plan\n");
+    commit("chore: el plan de prestamo-de-equipos", ["--trailer", "Diverger-Rol: Arquitecto", "--trailer",
+      "Diverger-Tarea: harness#212"]);
+    const plan = comprobar("plan/prestamo-de-equipos");
+    expect(plan.codigo).toBe(0);
+    expect(plan.salida).toBe("modificada=true\n");
+    expect(plan.resumen).toContain("CODEOWNERS pide la aprobación de un propietario");
+    // Solo esa forma: los workers usan diverger/<iniciativa>/<tarea>, también si la iniciativa se llama plan.
+    for (const rama of ["diverger/plan/TA-012", "plan/Prestamo", "plan/a/b", "otro/plan/prestamo", "plan/"]) {
+      expect(comprobar(rama).codigo).toBe(1);
+    }
+  });
+
   it("una suite cambiada en main después de abrir la PR no cuenta como de la PR", () => {
     git(["checkout", "-q", "-b", "tarea"]);
     escribir("src/prestamos/servicio.ts", "export const x = 2;\n");
