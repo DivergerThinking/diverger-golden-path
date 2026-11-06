@@ -586,6 +586,29 @@ describe.skipIf(!HAY_BASH || !HAY_GIT)("worktree del worker", () => {
       expect(JSON.parse(readFileSync(join(valor("WORKTREE"), FICHERO), "utf8"))).toEqual({ ...TAREA_PENDIENTE, status: "done" });
     });
 
+    it("guarda en la tarea los fallos que el worker corrigió, arreglados como finish_worker (harness#675)", () => {
+      expect(ejecutar("Crear el worktree").codigo).toBe(0);
+      writeFileSync(join(temp, "comprobaciones"), "verde\n");
+      writeFileSync(join(temp, "auditor"), "comentar\n");
+      escribir(valor("WORKTREE"), "src/prestamos/index.ts", "export const x = 1;\n");
+      writeFileSync(join(temp, "fallos"), [
+        "FALLO: Falta el índice de Firestore de reservas por fecha",
+        "FALLO:   con\ttabulador   y espacios  ",
+        "FALLO: Falta el índice de Firestore de reservas por fecha",
+        `FALLO: ${"a".repeat(400)}`,
+        "FALLO: el cuarto distinto no entra",
+        "FALLO:",
+      ].join("\n") + "\n");
+      expect(ejecutar("Comprobar el resultado").codigo).toBe(0);
+      const tarea = JSON.parse(readFileSync(join(valor("WORKTREE"), FICHERO), "utf8"));
+      expect(tarea.status).toBe("done");
+      expect(tarea.failures).toEqual([
+        "Falta el índice de Firestore de reservas por fecha",
+        "con tabulador y espacios",
+        `${"a".repeat(299)}…`,
+      ]);
+    });
+
     it.each([
       ["con las comprobaciones en rojo", (wt: string) => {
         writeFileSync(join(temp, "comprobaciones"), "rojo\n");
@@ -933,6 +956,25 @@ cat "$RUNNER_TEMP/respuesta-claude"`);
     const r = script(SCRIPT_MODELO, "1", { CLAUDE_BIN: join(dir, "no-existe") });
     expect(r.codigo).toBe(1);
     expect(r.motivo).toBe(`No está Claude Code en ${join(dir, "no-existe")}`);
+  });
+
+  it("tras unas comprobaciones en rojo pide la línea FALLO y la guarda para la tarea (harness#675)", () => {
+    writeFileSync(join(temp, "salida-1.json"), JSON.stringify({ session_id: "s-1" }));
+    writeFileSync(join(temp, "comprobaciones-1.log"), "FAIL src/reservas/reservas.test.ts\n");
+    const r = script(SCRIPT_MODELO, "2", { RESULTADO: "Hecho\\nFALLO: Falta el índice de Firestore\\nsrc/reservas/index.ts" });
+    expect(r.codigo).toBe(0);
+    expect(readFileSync(join(temp, "args-claude"), "utf8")).toContain("añade una línea que empiece por «FALLO:»");
+    expect(readFileSync(join(temp, "fallos"), "utf8")).toBe("FALLO: Falta el índice de Firestore\n");
+  });
+
+  it("no guarda FALLO en el primer intento ni tras un bloqueo del Auditor de seguridad (harness#675)", () => {
+    expect(script(SCRIPT_MODELO, "1", { RESULTADO: "FALLO: inventado" }).codigo).toBe(0);
+    expect(existsSync(join(temp, "fallos"))).toBe(false);
+    writeFileSync(join(temp, "salida-1.json"), JSON.stringify({ session_id: "s-1" }));
+    writeFileSync(join(temp, "veredicto-1"), "bloquear\n");
+    writeFileSync(join(temp, "auditor-1.md"), "explotación\n");
+    expect(script(SCRIPT_MODELO, "2", { RESULTADO: "FALLO: tampoco" }).codigo).toBe(0);
+    expect(existsSync(join(temp, "fallos"))).toBe(false);
   });
 
   it("si la skill se para con BLOQUEADA, el worker falla con su motivo", () => {
