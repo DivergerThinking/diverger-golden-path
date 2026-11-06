@@ -408,7 +408,17 @@ jobs:
           cambiados=$(git diff --cached --name-only)
           fuera=$(grep -Ev '^(src/|web/|app/contextos\.ts$)' <<< "$cambiados" || true)
           [ -z "$fuera" ] || fallar "El worker ha cambiado rutas fuera de src/, web/ y app/contextos.ts: ${fuera//$'\n'/ }"
-          jq '.status = "done"' "$FICHERO_TAREA" > "$RUNNER_TEMP/tarea.json"
+          # Los fallos que el worker corrigió van en la tarea, como hace finish_worker en el modo interactivo
+          # (HU-NUC-20, harness#675): los caracteres de control pasan a espacios, cada frase se recorta a 300
+          # caracteres, sin repetir, y se quedan las tres primeras. Así la sesión de /diverger:run los compara.
+          [ -f "$RUNNER_TEMP/fallos" ] || : > "$RUNNER_TEMP/fallos"
+          jq --rawfile f "$RUNNER_TEMP/fallos" '
+            ([$f | split("\n")[] | sub("^(FALLO|FAILURE):"; "") | gsub("[[:cntrl:]]"; " ") | gsub(" +"; " ")
+              | sub("^ "; "") | sub(" $"; "") | select(length > 0)
+              | if length > 300 then (.[0:299] | sub(" +$"; "")) + "…" else . end]
+              | reduce .[] as $x ([]; if index([$x]) then . else . + [$x] end) | .[0:3]) as $fallos
+            | .status = "done" | if ($fallos | length) > 0 then .failures = $fallos else . end' \
+            "$FICHERO_TAREA" > "$RUNNER_TEMP/tarea.json"
           cp "$RUNNER_TEMP/tarea.json" "$FICHERO_TAREA"
           git add "$FICHERO_TAREA"
           git diff --cached --stat
