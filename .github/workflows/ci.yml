@@ -1,7 +1,7 @@
 name: ci
 
-# CI de cada PR: trailers de autoría, lint, contratos, dependencias entre contextos, tipos, tests (también en el
-# contenedor de las comprobaciones del worker), dependencias con
+# CI de cada PR: trailers de autoría, la suite de aceptación, los ficheros de tareas, lint, contratos,
+# dependencias entre contextos, tipos, tests (también en el contenedor de las comprobaciones del worker), dependencias con
 # vulnerabilidades conocidas (SCA), la infraestructura como código y la imagen del contenedor con
 # su análisis. El análisis del código (SAST) está en codeql.yml y el de secretos en secretos.yml.
 # Al integrar en main, el job «despliegue» lleva a staging la imagen ya analizada (EN-FM-04).
@@ -129,6 +129,29 @@ jobs:
           gh label create suite-modificada -R "$GITHUB_REPOSITORY" --color B60205 \
             --description "La PR modifica la suite de aceptación (EN-CAL-01)" 2>/dev/null || true
           gh pr edit "$NUMERO" -R "$GITHUB_REPOSITORY" --add-label suite-modificada
+
+  # La PR de una tarea solo pasa su propio fichero de tarea de pending a done (EN-EJE-04, ADR 0045 del harness):
+  # con varios workers a la vez, ninguno marca una tarea ajena ni reabre una integrada.
+  tareas:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # La comprobación es la de la rama base: una PR no puede cambiar el script que la juzga.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+      - name: Commits de la PR
+        env:
+          NUMERO: ${{ github.event.pull_request.number }}
+        run: git fetch --quiet origin "refs/pull/$NUMERO/head"
+      - name: Ficheros de tareas
+        env:
+          RANGO: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+          PR_RAMA: ${{ github.head_ref }}
+        run: node scripts/tareas.mjs "$RANGO"
 
   # Solo en la plantilla: un repositorio creado desde ella recibe los ficheros de este commit y
   # nada más, así que se exportan a una carpeta limpia y se comprueban ahí desde cero.
