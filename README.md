@@ -64,10 +64,10 @@ El contexto `ejemplo` solo sirve para que todo funcione desde el primer momento:
 `.github/workflows/diverger-bucle.yml` construye el plan de una iniciativa sin una sesión abierta (HU-EJE-01, ADR 0016 del harness). Se lanza a mano, con la iniciativa:
 
 ```sh
-gh workflow run diverger-bucle.yml -f initiative=<iniciativa> [-f max-workers=1] [-f restart=true]
+gh workflow run diverger-bucle.yml -f initiative=<iniciativa> [-f max-workers=<1 a 3>] [-f restart=true]
 ```
 
-Es un programa sin modelo, `bucle.py` del núcleo, que el job descarga del harness con un token de la GitHub App de solo lectura. En cada vuelta actualiza la rama base, mira el job y la PR de cada worker y lanza `diverger-worker.yml` para las siguientes tareas listas, de una en una por defecto. Se para cuando todas las tareas están hechas, se agota el presupuesto de pasos o una espera su test de aceptación; el resumen del job dice por qué.
+Es un programa sin modelo, `bucle.py` del núcleo, que el job descarga del harness con un token de la GitHub App de solo lectura. En cada vuelta actualiza la rama base, mira el job y la PR de cada worker y lanza `diverger-worker.yml` para las siguientes tareas listas, tantas a la vez como diga `maxCodeWorkers` en `.diverger/settings.json` (1 si no lo dice); `max-workers` solo lo baja (ADR 0035 del harness). Se para cuando todas las tareas están hechas, se agota el presupuesto de pasos o una espera su test de aceptación; el resumen del job dice por qué.
 
 **Escalera de reintentos** (HU-EJE-05, ADR 0029 del harness). Si un worker falla, el bucle relanza la tarea hasta tres veces con las entradas `attempt` y `previous` (el job anterior). El worker lee el diagnóstico que dejó ese job: en el intento 2 empieza de cero y en el 3 replanifica dentro de la tarea. Si el tercero también falla, la tarea queda bloqueada, el bucle abre una issue en este repositorio, asignada a quien lanzó el bucle (`github.actor`, si es una persona), y sigue con las tareas que no dependen de ella. Se para con `blocked` cuando ya no puede lanzar nada más. Si se relanza, reanuda sin repetir lo hecho. `restart` levanta una parada por bloqueo o por presupuesto.
 
