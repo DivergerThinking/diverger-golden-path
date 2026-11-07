@@ -133,7 +133,14 @@ describe("forma del workflow del worker", () => {
         .toEqual(["ANTHROPIC_API_KEY", "BASH_ENV", "CLAUDE_BIN", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "ENV", "TOPE_JOB"]);
       expect(paso(nombre).run).toMatch(/^bash "\$GITHUB_WORKSPACE\/\.github\/diverger\/worker-modelo\.sh" [123]$/);
     }
+    // La única excepción es «Quién lanzó la ejecución» (EN-OPS-07): el token del job, que solo lee el contenido y las
+    // ejecuciones, en el env de ese paso, que no pasa a los siguientes. id-token solo sirve para entrar en GCP.
+    expect(JOB.permissions).toEqual({ contents: "read", actions: "read", "id-token": "write" });
     for (const anterior of PASOS.slice(0, indice("Worker"))) {
+      if (anterior.name === "Quién lanzó la ejecución") {
+        expect(anterior.env).toEqual({ GH_TOKEN: "${{ github.token }}" });
+        continue;
+      }
       expect(JSON.stringify(anterior.env ?? {})).not.toMatch(/token|GH_TOKEN|GITHUB_TOKEN/i);
     }
   });
@@ -343,14 +350,33 @@ describe("forma del workflow del worker", () => {
   });
 
   it("quien lanzó la ejecución sale de GitHub con el script de la rama base, no de github.actor ni del modelo (EN-OPS-06)", () => {
+    const lanzador = paso("Quién lanzó la ejecución");
+    expect(lanzador.id).toBe("lanzador");
+    expect(lanzador.if).toBeUndefined();
+    expect(lanzador["working-directory"]).toBeUndefined();
+    expect(lanzador.env).toEqual({ GH_TOKEN: "${{ github.token }}" });
+    expect(lanzador.run).toContain('node "$GITHUB_WORKSPACE/scripts/lanzador.mjs" "$GITHUB_RUN_ID" "$INICIATIVA"');
+    // En las salidas del paso, que ningún otro paso puede cambiar, y no en GITHUB_ENV.
+    expect(lanzador.run).toContain('>> "$GITHUB_OUTPUT"');
+    expect(lanzador.run).not.toContain("GITHUB_ENV");
     const commit = paso("Commit con los trailers");
-    expect(commit.run).toContain('node "$GITHUB_WORKSPACE/scripts/lanzador.mjs" "$GITHUB_RUN_ID" "$INICIATIVA"');
+    expect(commit.env).toMatchObject({ LANZADO_POR: "${{ steps.lanzador.outputs.login }}",
+      LANZADO_POR_ID: "${{ steps.lanzador.outputs.id }}", LANZADO_POR_NOMBRE: "${{ steps.lanzador.outputs.nombre }}" });
     expect(commit.run).toContain('--trailer "Co-authored-by: $LANZADO_POR_NOMBRE <$LANZADO_POR_ID+$LANZADO_POR@users.noreply.github.com>"');
-    expect(commit.run).toContain('echo "LANZADO_POR=$LANZADO_POR" >> "$GITHUB_ENV"');
+    expect(SIN_COMENTARIOS).not.toMatch(/LANZADO_POR[A-Z_]*=.*GITHUB_ENV/);
     // El bucle lanza el worker con la identidad del harness: github.actor sería diverger-harness[bot].
     expect(SIN_COMENTARIOS).not.toContain("github.actor");
-    expect(paso("Rama y PR").env?.LANZADO_POR).toBeUndefined();
+    expect(paso("Rama y PR").env?.LANZADO_POR).toBe("${{ steps.lanzador.outputs.login }}");
     expect(paso("Rama y PR").run).toContain("Lanzado por @$LANZADO_POR. Job del worker: $GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID");
+  });
+
+  it("quien lanzó la ejecución se sabe antes del modelo, y sus eventos de Claude Code lo llevan (EN-OPS-07)", () => {
+    expect(indice("Quién lanzó la ejecución")).toBeLessThan(indice("Configuración gestionada"));
+    expect(indice("Quién lanzó la ejecución")).toBeLessThan(indice("Worker"));
+    const gestionada = paso("Configuración gestionada");
+    expect(gestionada.env).toEqual({ LANZADO_POR: "${{ steps.lanzador.outputs.login }}" });
+    expect(gestionada.run).toContain('atributos+=",diverger.lanzado_por=$LANZADO_POR"');
+    expect(gestionada.run?.indexOf("atributos+=")).toBeLessThan(gestionada.run?.indexOf("OTEL_RESOURCE_ATTRIBUTES") ?? 0);
   });
 
   it("la telemetría solo corre si el repositorio la tiene configurada, y antes del worker", () => {
@@ -1004,12 +1030,21 @@ describe.skipIf(!HAY_JQ || !HAY_GIT)("commit del worker con quien lo lanzó", ()
     mkdirSync(bin, { recursive: true });
     // gh de mentira: solo el id de la App, que pide el paso con gh api users/<app>[bot].
     writeFileSync(join(bin, "gh"), "#!/usr/bin/env bash\necho 350234409\n", { mode: 0o755 });
+    const comun = { ...process.env, ...entorno, PATH: `${bin}:${process.env.PATH ?? ""}`, GITHUB_RUN_ID: "900",
+      GITHUB_REPOSITORY: REPO, GITHUB_API_URL: api.url, GH_TOKEN: "token-de-prueba", GITHUB_OUTPUT: join(temp, "salidas-lanzador") };
+    writeFileSync(comun.GITHUB_OUTPUT, "");
     let codigo = 0;
     try {
+      // Primero el paso que averigua quién la lanzó, y el commit con sus salidas, como hace GitHub con steps.lanzador.
+      await promisify(execFile)("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", paso("Quién lanzó la ejecución").run ?? ""], {
+        cwd: dir, env: comun,
+      });
+      const salidas = Object.fromEntries(readFileSync(comun.GITHUB_OUTPUT, "utf8").split("\n").filter(Boolean)
+        .map((linea) => [linea.slice(0, linea.indexOf("=")), linea.slice(linea.indexOf("=") + 1)]));
       await promisify(execFile)("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", paso("Commit con los trailers").run ?? ""], {
         cwd: worktree,
-        env: { ...process.env, ...entorno, PATH: `${bin}:${process.env.PATH ?? ""}`, APP: "diverger-harness", GITHUB_RUN_ID: "900",
-          GITHUB_REPOSITORY: REPO, GITHUB_API_URL: api.url, GH_TOKEN: "token-de-prueba" },
+        env: { ...comun, APP: "diverger-harness", LANZADO_POR: salidas.login ?? "", LANZADO_POR_ID: salidas.id ?? "",
+          LANZADO_POR_NOMBRE: salidas.nombre ?? "" },
       });
     } catch (error) {
       codigo = (error as { code: number }).code;
@@ -1044,7 +1079,7 @@ describe.skipIf(!HAY_JQ || !HAY_GIT)("commit del worker con quien lo lanzó", ()
       "Diverger-Iniciado-por: joselcs", "Co-authored-by: José Luis Calvo <1234567+joselcs@users.noreply.github.com>"]) {
       expect(mensaje).toContain(trailer);
     }
-    expect(readFileSync(valor("GITHUB_ENV"), "utf8")).toContain("LANZADO_POR=joselcs\n");
+    expect(readFileSync(join(temp, "salidas-lanzador"), "utf8")).toBe("login=joselcs\nid=1234567\nnombre=José Luis Calvo\n");
     // El CI de la PR, con la descripción que escribe el paso «Rama y PR».
     const api = await arrancar({ ejecuciones: lanzadoPorElBucle("joselcs"), usuarios: PERSONAS });
     servidor?.close();

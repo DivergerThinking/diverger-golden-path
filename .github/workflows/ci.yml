@@ -68,13 +68,15 @@ jobs:
           IMAGEN_COMPROBACIONES="$imagen" WORKTREE="$RUNNER_TEMP/worktree" bash .github/diverger/worker-comprobar.sh 1
 
   # Cada commit de un agente lleva los trailers de rol, modelo y tarea (scripts/git-hooks), y cada
-  # commit del harness dice qué persona lo lanzó, la misma que lanzó su ejecución (EN-OPS-06).
+  # commit del harness dice qué persona lo lanzó, la misma que lanzó su ejecución (EN-OPS-06). La
+  # descripción de cada PR del harness también lo dice: «Lanzado por @login» (EN-OPS-07).
   trailers:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       actions: read # Para saber quién lanzó la ejecución del worker que abrió la PR.
+      pull-requests: read # Para leer la descripción actual de la PR (EN-OPS-07).
     steps:
       # La comprobación es la de la rama base: una PR no puede cambiar el script que la juzga.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -89,7 +91,9 @@ jobs:
         env:
           RANGO: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
-          PR_CUERPO: ${{ github.event.pull_request.body }}
+          # La descripción la lee el script de la API, no del evento: así un «Re-run» ve la actual (EN-OPS-07).
+          PR_NUMERO: ${{ github.event.pull_request.number }}
+          PR_AUTOR: ${{ github.event.pull_request.user.login }}
           PR_RAMA: ${{ github.head_ref }}
           PR_BASE: ${{ github.base_ref }}
         run: node scripts/trailers.mjs "$RANGO"

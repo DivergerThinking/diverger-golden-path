@@ -117,7 +117,9 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token-bucle.outputs.token }}
           GCP_ARRANQUE: ${{ steps.gcp-arranque.outcome }}
-          # A quién se asigna la issue de una tarea bloqueada: quien lanzó el bucle, si es una persona (ADR 0029).
+          # Quien lanzó el bucle, si es una persona: se le asigna la issue de una tarea bloqueada (ADR 0029), y run.json,
+          # la issue y las filas de la telemetría lo dicen (EN-OPS-07, ADR 0047 del harness). Va con --notify, el nombre
+          # que entiende cualquier núcleo: desde la 0.40.0 es el mismo que --launched-by.
           LANZADO_POR: ${{ github.actor }}
         run: |
           opciones=(--initiative "$INICIATIVA" --repo "$GITHUB_REPOSITORY" --base "$GITHUB_REF_NAME"
