@@ -76,6 +76,7 @@ jobs:
     permissions:
       contents: read
       actions: read # Para saber quién lanzó la ejecución del worker que abrió la PR.
+      pull-requests: read # Para leer la descripción actual de la PR (EN-OPS-07).
     steps:
       # La comprobación es la de la rama base: una PR no puede cambiar el script que la juzga.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -90,7 +91,8 @@ jobs:
         env:
           RANGO: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
-          PR_CUERPO: ${{ github.event.pull_request.body }}
+          # La descripción la lee el script de la API, no del evento: así un «Re-run» ve la actual (EN-OPS-07).
+          PR_NUMERO: ${{ github.event.pull_request.number }}
           PR_AUTOR: ${{ github.event.pull_request.user.login }}
           PR_RAMA: ${{ github.head_ref }}
           PR_BASE: ${{ github.base_ref }}

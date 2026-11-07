@@ -114,14 +114,15 @@ function commitDelHarness(iniciadoPor: string | undefined, coautor = iniciadoPor
   commit(`feat: TA-004 Prestar un equipo\n\n${trailers.join("\n")}`, HARNESS);
 }
 
-async function comprobarPR(datos: Datos, cuerpo = CUERPO, rama = RAMA, base = "main",
-  autor = "diverger-harness[bot]"): Promise<{ codigo: number; errores: string }> {
-  const api = await arrancar(datos);
+// La descripción la da la API (PR 55), como en el CI; `delEvento` es la del evento, que el script ya no usa con número.
+async function comprobarPR(datos: Datos, cuerpo: string | null = CUERPO, rama = RAMA, base = "main",
+  autor = "diverger-harness[bot]", delEvento = "Descripción vieja del evento"): Promise<{ codigo: number; errores: string }> {
+  const api = await arrancar({ ...datos, prs: datos.prs ?? (cuerpo === null ? {} : { 55: { body: cuerpo } }) });
   servidor = api.servidor;
   try {
     await promisify(execFile)(process.execPath, [SCRIPT, "base..HEAD"], {
       cwd: repo,
-      env: { ...process.env, GITHUB_API_URL: api.url, GITHUB_REPOSITORY: REPO, GH_TOKEN: "token-de-prueba", PR_CUERPO: cuerpo, PR_AUTOR: autor, PR_RAMA: rama, PR_BASE: base },
+      env: { ...process.env, GITHUB_API_URL: api.url, GITHUB_REPOSITORY: REPO, GH_TOKEN: "token-de-prueba", PR_NUMERO: "55", PR_CUERPO: delEvento, PR_AUTOR: autor, PR_RAMA: rama, PR_BASE: base },
     });
     return { codigo: 0, errores: "" };
   } catch (error) {
@@ -352,6 +353,39 @@ describe.skipIf(!HAY_GIT)("«Lanzado por» en la descripción de la PR del harne
     expect(errores.trim()).toBe("Falta “Lanzado por” en la descripción de la PR");
   });
 
+  it("relanzar el job lee la descripción actual de la API, no la del evento", async () => {
+    commitDelHarness("joselcs");
+    // Alguien quitó el texto después de abrir la PR: el evento aún lo tiene, la API ya no.
+    const { codigo, errores } = await comprobarPR(LANZADO_POR_JOSELCS, SOLO_EL_JOB, RAMA, "main", "diverger-harness[bot]", CUERPO);
+    expect(codigo).toBe(1);
+    expect(errores.trim()).toBe("Falta “Lanzado por” en la descripción de la PR");
+    // Y al revés: se corrigió la descripción y el evento sigue con la vieja.
+    expect(await comprobarPR(LANZADO_POR_JOSELCS, CUERPO, RAMA, "main", "diverger-harness[bot]", SOLO_EL_JOB))
+      .toEqual({ codigo: 0, errores: "" });
+  });
+
+  it("si no puede leer la descripción de una PR del harness, falla y dice por qué", async () => {
+    commitDelHarness("joselcs");
+    const { codigo, errores } = await comprobarPR(LANZADO_POR_JOSELCS, null);
+    expect(codigo).toBe(1);
+    expect(errores).toContain("No se puede leer la descripción de la PR: La API de GitHub responde 404 a repos/");
+  });
+
+  it("la PR de mantenimiento que dice otra persona falla", async () => {
+    commitDeMantenimiento(trailersDeMantenimiento("joselcs"));
+    const { codigo, errores } = await comprobarPR({ ejecuciones: [], usuarios: PERSONAS },
+      CUERPO_REINICIO.replace("@joselcs", "@ana-lopez"), "diverger/reinicio/19123456789");
+    expect(codigo).toBe(1);
+    expect(errores).toContain("“Lanzado por @ana-lopez” no coincide con quien lanzó el harness (Diverger-Iniciado-por: joselcs)");
+  });
+
+  it("la PR de Dependabot no es del harness y no necesita «Lanzado por» ni la API", async () => {
+    git(["config", "core.hooksPath", join(repo, "sin-hooks")]);
+    commit("build(deps): bump vite", { GIT_AUTHOR_NAME: "dependabot[bot]", GIT_AUTHOR_EMAIL: "49699333+dependabot[bot]@users.noreply.github.com" });
+    expect(await comprobarPR({ ejecuciones: [], usuarios: PERSONAS }, null, "dependabot/npm_and_yarn/vite-7.1.0", "main",
+      "dependabot[bot]")).toEqual({ codigo: 0, errores: "" });
+  });
+
   it("la PR de una persona no necesita «Lanzado por»", async () => {
     commit("docs: README");
     commit("feat: algo", AGENTE);
@@ -372,15 +406,17 @@ describe("job trailers del CI", () => {
     expect(job.steps.some((p) => p.run?.includes('git fetch --quiet origin "refs/pull/$NUMERO/head"'))).toBe(true);
   });
 
-  it("pasa la descripción y la rama de la PR y puede leer las ejecuciones (EN-OPS-06)", () => {
-    expect(job.permissions).toEqual({ contents: "read", actions: "read" });
+  it("pasa el número, el autor y la rama de la PR y puede leer las ejecuciones y la PR (EN-OPS-06, EN-OPS-07)", () => {
+    expect(job.permissions).toEqual({ contents: "read", actions: "read", "pull-requests": "read" });
     const paso = job.steps.find((p) => p.run === 'node scripts/trailers.mjs "$RANGO"');
     expect(paso?.env).toMatchObject({
       GH_TOKEN: "${{ github.token }}",
-      PR_CUERPO: "${{ github.event.pull_request.body }}",
+      PR_NUMERO: "${{ github.event.pull_request.number }}",
       PR_AUTOR: "${{ github.event.pull_request.user.login }}",
       PR_RAMA: "${{ github.head_ref }}",
       PR_BASE: "${{ github.base_ref }}",
     });
+    // La descripción del evento no: un «Re-run» repetiría la de entonces.
+    expect(paso?.env?.PR_CUERPO).toBeUndefined();
   });
 });

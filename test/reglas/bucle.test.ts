@@ -122,7 +122,7 @@ describe("workflow del bucle desatendido", () => {
     expect(paso("Bucle").env).toEqual({ GH_TOKEN: "${{ steps.token-bucle.outputs.token }}",
       GCP_ARRANQUE: "${{ steps.gcp-arranque.outcome }}", LANZADO_POR: "${{ github.actor }}" });
     // La issue se asigna a quien lanzó el bucle, solo si es una persona: un «…[bot]» no pasa la expresión.
-    expect(paso("Bucle").run).toContain('[[ "$LANZADO_POR" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] && opciones+=(--launched-by "$LANZADO_POR")');
+    expect(paso("Bucle").run).toContain('[[ "$LANZADO_POR" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] && opciones+=(--notify "$LANZADO_POR")');
   });
 
   it("ejecuta bucle.py del núcleo contra este repositorio y su rama base", () => {

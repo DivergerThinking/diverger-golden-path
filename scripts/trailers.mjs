@@ -2,9 +2,10 @@
 // harness, además, dicen qué persona lo lanzó (EN-OPS-06, RQ.066): Diverger-Iniciado-por y su
 // Co-authored-by con el correo noreply de GitHub, y el CI lo compara con quien lanzó la ejecución.
 // Uso en el CI: node scripts/trailers.mjs <base>..<head>. Falla si un commit de agente no los lleva.
-// Para los commits del harness lee la PR de PR_CUERPO (el enlace al job del worker y «Lanzado por»),
-// PR_AUTOR (quien la abrió), PR_RAMA (diverger/<iniciativa>/<tarea>) y PR_BASE (su rama base), y
-// pregunta a la API de GitHub con GH_TOKEN (scripts/lanzador.mjs).
+// Para los commits del harness lee la descripción de la PR PR_NUMERO de la API (el enlace al job del
+// worker y «Lanzado por»; sin número, de PR_CUERPO), PR_AUTOR (quien la abrió), PR_RAMA
+// (diverger/<iniciativa>/<tarea>) y PR_BASE (su rama base), y pregunta a la API de GitHub con
+// GH_TOKEN (scripts/lanzador.mjs).
 // Excepción (harness#528): en las ramas de mantenimiento del kit de evaluación del harness,
 // diverger/reinicio/<número> y diverger/ajustes/<número>, los commits del harness llevan los cuatro
 // trailers, pero no se comparan con una ejecución del worker: los hacen preparar-nivel-0.yml y
@@ -103,6 +104,16 @@ export function problemasDeLaPr(lista, { autor, cuerpo } = {}) {
   return [...otros].map((quien) => `“Lanzado por @${login}” no coincide con quien lanzó el harness (${TRAILERS.iniciadoPor}: ${quien})`);
 }
 
+/**
+ * La descripción actual de la PR `numero`, leída de la API. Sin número (fuera del CI) vale `porDefecto`.
+ */
+export async function descripcionDeLaPr(api, repo, numero, porDefecto) {
+  if (!numero) return porDefecto;
+  if (!/^[0-9]+$/.test(numero)) throw new Error(`el número de la PR no es válido: ${numero}`);
+  const pr = await api(`repos/${repo}/pulls/${numero}`);
+  return typeof pr?.body === "string" ? pr.body : "";
+}
+
 /** El id del job del worker que enlaza la descripción de su PR («Job del worker: …/actions/runs/<id>»). */
 export function ejecucionDelCuerpo(cuerpo) {
   return /Job del worker: \S*\/actions\/runs\/(\d+)/.exec(cuerpo ?? "")?.[1];
@@ -177,14 +188,27 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     },
   } : {};
   const lista = commits(rango);
-  const errores = [...problemasDeLaPr(lista, { autor: process.env.PR_AUTOR, cuerpo: process.env.PR_CUERPO }), ...await comprobar(lista, () => {
-    const ejecucion = ejecucionDelCuerpo(process.env.PR_CUERPO);
+  const autor = process.env.PR_AUTOR;
+  const errores = [];
+  // La descripción, de la API y no del evento: un «Re-run» del job repite el evento con la descripción de entonces.
+  // Solo se lee si la PR es del harness, así que las de las personas no dependen de la API.
+  let cuerpo = process.env.PR_CUERPO;
+  if (autor === HARNESS || lista.some(esDelHarness)) {
+    try {
+      cuerpo = await descripcionDeLaPr(api, process.env.GITHUB_REPOSITORY ?? "", process.env.PR_NUMERO, cuerpo);
+    } catch (error) {
+      cuerpo = "";
+      errores.push(`No se puede leer la descripción de la PR: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  errores.push(...problemasDeLaPr(lista, { autor, cuerpo }), ...await comprobar(lista, () => {
+    const ejecucion = ejecucionDelCuerpo(cuerpo);
     if (!ejecucion) throw new Error("la PR no enlaza el job del worker que la abrió");
     const rama = ramaDelWorker(process.env.PR_RAMA);
     if (!rama) throw new Error(`la rama de la PR (${process.env.PR_RAMA ?? ""}) no es la de un worker (diverger/<iniciativa>/<tarea>)`);
     return quienLanzo({ api, repo: process.env.GITHUB_REPOSITORY ?? "", ejecucion,
       iniciativa: rama.iniciativa, pr: { tarea: rama.tarea, base: process.env.PR_BASE ?? "" } });
-  }, mantenimiento)];
+  }, mantenimiento));
   for (const error of errores) console.error(error);
   process.exit(errores.length ? 1 : 0);
 }
