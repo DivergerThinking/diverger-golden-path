@@ -386,6 +386,35 @@ describe.skipIf(!HAY_GIT)("«Lanzado por» en la descripción de la PR del harne
       "dependabot[bot]")).toEqual({ codigo: 0, errores: "" });
   });
 
+  // Con el ci.yml de una plantilla anterior, que pasa PR_CUERPO y no PR_NUMERO (un reinicio a esa plantilla).
+  async function sinNumero(cuerpo: string | undefined): Promise<{ codigo: number; errores: string }> {
+    const api = await arrancar({ ...LANZADO_POR_JOSELCS, prs: {} });
+    servidor = api.servidor;
+    const env: Record<string, string | undefined> = { ...process.env, GITHUB_API_URL: api.url, GITHUB_REPOSITORY: REPO,
+      GH_TOKEN: "token-de-prueba", PR_AUTOR: "diverger-harness[bot]", PR_RAMA: RAMA, PR_BASE: "main", PR_CUERPO: cuerpo };
+    delete env.PR_NUMERO;
+    if (cuerpo === undefined) delete env.PR_CUERPO;
+    try {
+      await promisify(execFile)(process.execPath, [SCRIPT, "base..HEAD"], { cwd: repo, env });
+      return { codigo: 0, errores: "" };
+    } catch (error) {
+      const fallo = error as { code: number; stderr: string };
+      return { codigo: fallo.code, errores: fallo.stderr };
+    }
+  }
+
+  it("sin PR_NUMERO usa PR_CUERPO, como con el ci.yml de una plantilla anterior", async () => {
+    commitDelHarness("joselcs");
+    expect(await sinNumero(CUERPO)).toEqual({ codigo: 0, errores: "" });
+  });
+
+  it("sin PR_NUMERO ni PR_CUERPO, la PR del harness falla", async () => {
+    commitDelHarness("joselcs");
+    const { codigo, errores } = await sinNumero(undefined);
+    expect(codigo).toBe(1);
+    expect(errores).toContain("Falta “Lanzado por” en la descripción de la PR");
+  });
+
   it("la PR de una persona no necesita «Lanzado por»", async () => {
     commit("docs: README");
     commit("feat: algo", AGENTE);
