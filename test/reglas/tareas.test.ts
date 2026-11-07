@@ -203,7 +203,7 @@ describe.skipIf(!HAY_GIT)("la PR de una tarea y los ficheros de tareas", () => {
     expect(r.errores).toContain("no marca su tarea como hecha");
   });
 
-  it("la PR que nombra dos tareas falla", () => {
+  it("en la rama de un worker, un trailer con otra tarea falla", () => {
     codigo();
     tarea("TA-004", { status: "done" });
     commit("feat: TA-004", trailers("TA-004"));
@@ -211,7 +211,62 @@ describe.skipIf(!HAY_GIT)("la PR de una tarea y los ficheros de tareas", () => {
     commit("feat: TA-005", trailers("TA-005"));
     const r = comprobar();
     expect(r.codigo).toBe(1);
+    expect(r.errores).toContain(`La rama ${RAMA} es de la tarea TA-004, pero el trailer Diverger-Tarea nombra TA-005.`);
+    const otra = comprobar("diverger/prestamos/TA-005");
+    expect(otra.codigo).toBe(1);
+    expect(otra.errores).toContain("es de la tarea TA-005, pero el trailer Diverger-Tarea nombra TA-004");
+  });
+
+  it("en la rama de un worker, sin trailers, la tarea es la de la rama", () => {
+    codigo();
+    tarea("TA-004", { status: "done" });
+    tarea("TA-005", { status: "done" });
+    commit("feat: a mano");
+    const r = comprobar();
+    expect(r.codigo).toBe(1);
+    expect(r.errores).toContain(`El PR de TA-004 solo puede cambiar tasks/TA-004.json: también cambia ${CARPETA}/TA-005.json.`);
+    git(["reset", "-q", "--hard", "base"]);
+    codigo();
+    commit("feat: a mano, sin marcar");
+    expect(comprobar().errores).toContain("El PR de TA-004 no marca su tarea como hecha");
+  });
+
+  it("la PR que solo marca su tarea, porque ya estaba cubierta (YA-CUBIERTA), pasa", () => {
+    tarea("TA-004", { status: "done" });
+    commit("chore: TA-004 ya cubierta por TA-003", trailers("TA-004"));
+    expect(comprobar().codigo).toBe(0);
+  });
+
+  it("fuera de la rama de un worker, un trailer con una tarea del plan hace de la PR la de esa tarea", () => {
+    codigo();
+    tarea("TA-004", { status: "done" });
+    tarea("TA-005", { status: "done" });
+    commit("feat: TA-004", trailers("TA-004"));
+    const r = comprobar("feat/prestamos");
+    expect(r.codigo).toBe(1);
+    expect(r.errores).toContain(`El PR de TA-004 solo puede cambiar tasks/TA-004.json: también cambia ${CARPETA}/TA-005.json.`);
+    git(["reset", "-q", "--hard", "base"]);
+    codigo();
+    commit("feat: TA-004", trailers("TA-004"));
+    expect(comprobar("feat/prestamos").errores).toContain("El PR de TA-004 no marca su tarea como hecha");
+  });
+
+  it("fuera de la rama de un worker, la PR que nombra dos tareas del plan falla, también en un solo trailer", () => {
+    codigo();
+    tarea("TA-004", { status: "done" });
+    commit("feat: TA-004 y TA-005", trailers("TA-004, TA-005"));
+    const r = comprobar("feat/prestamos");
+    expect(r.codigo).toBe(1);
     expect(r.errores).toContain("La PR nombra varias tareas en el trailer Diverger-Tarea (TA-004, TA-005)");
+  });
+
+  it("la PR de mantenimiento de un agente, con una issue en el trailer, no es de una tarea (plantilla#53)", () => {
+    escribir(".github/workflows/diverger-bucle.yml", "name: bucle\n");
+    commit("fix: sin max-workers, el bucle usa maxCodeWorkers (harness#695)", ["--trailer", "Diverger-Rol: Desarrollador",
+      "--trailer", "Diverger-Modelo: claude-opus-5-5", "--trailer", "Diverger-Tarea: harness#695"]);
+    const r = comprobar("fix/695-max-workers");
+    expect(r.codigo).toBe(0);
+    expect(r.salida).toContain("No es la PR de una tarea");
   });
 
   it("basta un commit de la tarea entre otros de una persona", () => {
@@ -223,18 +278,57 @@ describe.skipIf(!HAY_GIT)("la PR de una tarea y los ficheros de tareas", () => {
     expect(comprobar().codigo).toBe(1);
   });
 
-  it("la PR de una persona, la del plan o una de mantenimiento no es de una tarea y pasa", () => {
+  it("la PR de una persona fuera de la rama de un worker, o una de mantenimiento del kit, no es de una tarea y pasa", () => {
     tarea("TA-003", { status: "pending" });
     tarea("TA-005", { status: "done" });
     commit("chore: reabrir TA-003 a mano");
-    const r = comprobar();
+    const r = comprobar("chore/reabrir-ta-003");
     expect(r.codigo).toBe(0);
     expect(r.salida).toContain("No es la PR de una tarea");
-    tarea("TA-020");
-    commit("chore: el plan nuevo", ["--trailer", "Diverger-Rol: Arquitecto", "--trailer", "Diverger-Tarea: harness#212"]);
-    expect(comprobar("plan/prestamos").codigo).toBe(0);
+    commit("chore: reinicio", ["--allow-empty", "--trailer", "Diverger-Rol: Evaluación", "--trailer", "Diverger-Tarea: EN-GP-06"]);
     expect(comprobar("diverger/reinicio/12345").codigo).toBe(0);
-    expect(comprobar("diverger/prestamos/TA-020").codigo).toBe(1);
+    expect(comprobar("diverger/ajustes/7").codigo).toBe(0);
+    // Solo esas formas: con letras es la rama de un worker.
+    expect(comprobar("diverger/reinicio/abc").codigo).toBe(1);
+  });
+
+  describe("la PR del plan de una iniciativa, en plan/<iniciativa>", () => {
+    const PLAN = ["--trailer", "Diverger-Rol: Arquitecto", "--trailer", "Diverger-Tarea: harness#212"];
+
+    it("da de alta tareas en pending y puede cambiar las que ya existen sin tocar su estado", () => {
+      tarea("TA-020");
+      tarea("TA-005", { dependsOn: ["TA-004"] });
+      commit("chore: el plan nuevo", PLAN);
+      const r = comprobar("plan/prestamos");
+      expect(r.codigo).toBe(0);
+      expect(r.salida).toContain("La PR del plan solo da de alta tareas en pending");
+    });
+
+    it("no da de alta una tarea hecha", () => {
+      tarea("TA-020", { status: "done" });
+      commit("chore: el plan nuevo", PLAN);
+      const r = comprobar("plan/prestamos");
+      expect(r.codigo).toBe(1);
+      expect(r.errores).toContain(`La PR del plan solo da de alta tareas en pending: ${CARPETA}/TA-020.json está en "done".`);
+    });
+
+    it("no reabre una tarea hecha ni la borra", () => {
+      tarea("TA-003", { status: "pending" });
+      commit("chore: el plan nuevo", PLAN);
+      expect(comprobar("plan/prestamos").errores).toContain("Una tarea hecha no vuelve a pending: TA-003");
+      git(["reset", "-q", "--hard", "base"]);
+      rmSync(join(repo, CARPETA, "TA-003.json"));
+      commit("chore: el plan nuevo", PLAN);
+      expect(comprobar("plan/prestamos").errores).toContain("Una tarea hecha no vuelve a pending: TA-003");
+    });
+
+    it("no marca como hecha una tarea pendiente", () => {
+      tarea("TA-004", { status: "done" });
+      commit("chore: el plan nuevo", PLAN);
+      const r = comprobar("plan/prestamos");
+      expect(r.codigo).toBe(1);
+      expect(r.errores).toContain(`La PR del plan no cambia el estado de una tarea que ya existe: ${CARPETA}/TA-004.json pasa de "pending" a "done".`);
+    });
   });
 
   it("una tarea marcada en main después de abrir la PR no cuenta como de la PR", () => {
