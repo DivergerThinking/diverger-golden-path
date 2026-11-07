@@ -165,6 +165,20 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
+      # Quién lanzó la ejecución (EN-OPS-06): github.actor de este job o, si lo lanzó el bucle con la identidad del
+      # harness, el del bucle. Lo dice GitHub, no el modelo; el script es el de la rama base. Va antes del modelo para que
+      # su telemetría lo lleve (EN-OPS-07, ADR 0047 del harness), y en las salidas del paso, que ningún otro paso cambia.
+      - name: Quién lanzó la ejecución
+        id: lanzador
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          fallar() { printf '%s\n' "$1" > "$RUNNER_TEMP/motivo"; echo "::error::$1"; exit 1; }
+          persona=$(node "$GITHUB_WORKSPACE/scripts/lanzador.mjs" "$GITHUB_RUN_ID" "$INICIATIVA" 2>"$RUNNER_TEMP/lanzador") \
+            || fallar "No se sabe quién lanzó la ejecución: $(cat "$RUNNER_TEMP/lanzador")"
+          # El nombre ya viene sin saltos de línea (nombreSeguro de lanzador.mjs).
+          jq -r '"login=\(.login)", "id=\(.id)", "nombre=\(.nombre)"' <<< "$persona" >> "$GITHUB_OUTPUT"
+          echo "Lanzado por @$(jq -r .login <<< "$persona")"
       # La carpeta de Claude Code sale como salida del paso: los pasos con la clave la usan con un PATH fijo.
       - name: Instalar Claude Code
         id: claude
@@ -199,8 +213,11 @@ jobs:
       # repositorio. Cada ejecución lleva sus identificadores para encontrar sus eventos.
       - name: Configuración gestionada
         if: env.TELEMETRIA == 'true'
+        env:
+          LANZADO_POR: ${{ steps.lanzador.outputs.login }}
         run: |
           atributos="github.run_id=$GITHUB_RUN_ID,github.repository=$GITHUB_REPOSITORY,diverger.task=$TAREA,diverger.run=$EJECUCION"
+          atributos+=",diverger.lanzado_por=$LANZADO_POR"
           sudo mkdir -p /etc/claude-code
           jq --arg a "$atributos" '.env.OTEL_RESOURCE_ATTRIBUTES = $a' .github/telemetria/managed-settings.json \
             | sudo tee /etc/claude-code/managed-settings.json >/dev/null
@@ -441,17 +458,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           APP: ${{ steps.token.outputs.app-slug }}
+          # Del paso «Quién lanzó la ejecución».
+          LANZADO_POR: ${{ steps.lanzador.outputs.login }}
+          LANZADO_POR_ID: ${{ steps.lanzador.outputs.id }}
+          LANZADO_POR_NOMBRE: ${{ steps.lanzador.outputs.nombre }}
         run: |
           fallar() { printf '%s\n' "$1" > "$RUNNER_TEMP/motivo"; echo "::error::$1"; exit 1; }
           id=$(gh api "users/$APP%5Bbot%5D" -q .id) || fallar "No se encuentra el usuario de la App $APP"
-          # Quién lanzó la ejecución (EN-OPS-06): github.actor de este job o, si lo lanzó el bucle con la
-          # identidad del harness, el del bucle. Lo dice GitHub, no el modelo; el script es el de la rama base.
-          persona=$(node "$GITHUB_WORKSPACE/scripts/lanzador.mjs" "$GITHUB_RUN_ID" "$INICIATIVA" 2>"$RUNNER_TEMP/lanzador") \
-            || fallar "No se sabe quién lanzó la ejecución: $(cat "$RUNNER_TEMP/lanzador")"
-          LANZADO_POR=$(jq -r .login <<< "$persona")
-          LANZADO_POR_ID=$(jq -r .id <<< "$persona")
-          LANZADO_POR_NOMBRE=$(jq -r .nombre <<< "$persona")
-          echo "LANZADO_POR=$LANZADO_POR" >> "$GITHUB_ENV"
           titulo=$(jq -r .title "$FICHERO_TAREA")
           tipo=feat
           [ ! -s "$RUNNER_TEMP/solo-marca" ] || tipo=chore  # Solo marca la tarea (harness#538).
@@ -469,6 +482,7 @@ jobs:
         working-directory: ${{ env.WORKTREE }}
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+          LANZADO_POR: ${{ steps.lanzador.outputs.login }}
         run: |
           fallar() { printf '%s\n' "$1" > "$RUNNER_TEMP/motivo"; echo "::error::$1"; exit 1; }
           repo="$GITHUB_REPOSITORY"

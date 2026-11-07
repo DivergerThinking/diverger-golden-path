@@ -117,7 +117,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token-bucle.outputs.token }}
           GCP_ARRANQUE: ${{ steps.gcp-arranque.outcome }}
-          # A quién se asigna la issue de una tarea bloqueada: quien lanzó el bucle, si es una persona (ADR 0029).
+          # Quien lanzó el bucle, si es una persona: se le asigna la issue de una tarea bloqueada (ADR 0029), y run.json,
+          # la issue y las filas de la telemetría lo dicen (EN-OPS-07, ADR 0047 del harness).
           LANZADO_POR: ${{ github.actor }}
         run: |
           opciones=(--initiative "$INICIATIVA" --repo "$GITHUB_REPOSITORY" --base "$GITHUB_REF_NAME"
@@ -126,7 +127,7 @@ jobs:
           [ -n "$MAX_WORKERS" ] && opciones+=(--max-workers "$MAX_WORKERS")
           [ "$REINICIAR" = "true" ] && opciones+=(--restart)
           [ "$GCP_ARRANQUE" = "success" ] && opciones+=(--log-project "$GCP_PROJECT_ID")
-          [[ "$LANZADO_POR" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] && opciones+=(--notify "$LANZADO_POR")
+          [[ "$LANZADO_POR" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] && opciones+=(--launched-by "$LANZADO_POR")
           set +e
           python3 .diverger-nucleo/plugins/diverger/server/bucle.py "${opciones[@]}" | tee salida.txt
           codigo=${PIPESTATUS[0]}
