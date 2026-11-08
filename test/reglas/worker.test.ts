@@ -1085,6 +1085,19 @@ cat "$RUNNER_TEMP/respuesta-claude"`);
     expect(readFileSync(join(temp, "fallos"), "utf8")).toBe("");
   });
 
+  it.each([
+    ["con líneas en blanco al final", "Hecho\\nFALLO: faltaba el índice\\nFin\\n\\n   \\n", "FALLO: faltaba el índice\n"],
+    ["con finales de Windows y una línea vacía al final", "Hecho\\r\\nFALLO: faltaba el índice\\r\\nFin\\r\\n\\r\\n", "FALLO: faltaba el índice\n"],
+    ["seguida de YA-CUBIERTA en la última", "Corregido\\nFALLO: faltaba el índice\\nYA-CUBIERTA: lo cubre TA-1", "FALLO: faltaba el índice\n"],
+    ["en una respuesta de una sola línea, que no tiene penúltima", "FALLO: faltaba el índice", ""],
+    ["con sangría, que no empieza la línea", "Hecho\\n  FALLO: faltaba el índice\\nFin", ""],
+  ])("la línea FALLO %s (harness#730)", (_caso, resultado, esperado) => {
+    writeFileSync(join(temp, "salida-1.json"), JSON.stringify({ session_id: "s-1" }));
+    writeFileSync(join(temp, "comprobaciones-1.log"), "FAIL\n");
+    expect(script(SCRIPT_MODELO, "2", { RESULTADO: resultado }).codigo).toBe(0);
+    expect(readFileSync(join(temp, "fallos"), "utf8")).toBe(esperado);
+  });
+
   it("no guarda FALLO en el primer intento ni tras un bloqueo del Auditor de seguridad (harness#675)", () => {
     expect(script(SCRIPT_MODELO, "1", { RESULTADO: "FALLO: inventado" }).codigo).toBe(0);
     expect(existsSync(join(temp, "fallos"))).toBe(false);

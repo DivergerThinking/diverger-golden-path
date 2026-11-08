@@ -8,8 +8,9 @@
 # Son los intentos dentro del job. INTENTO_BUCLE es el del bucle (ADR 0029 del harness): en el 2 y el 3, el primer
 # intento del job recibe además el diagnóstico del job anterior ($RUNNER_TEMP/diagnostico-anterior.md).
 # Si el modelo termina con «BLOQUEADA:», el intento falla con ese motivo; con «YA-CUBIERTA:», deja el motivo en
-# $RUNNER_TEMP/cubierta (harness#538). Tras unas comprobaciones en rojo, las líneas «FALLO:» con la causa que corrigió
-# se añaden a $RUNNER_TEMP/fallos, que «Comprobar el resultado» guarda en la tarea (HU-NUC-20, harness#675).
+# $RUNNER_TEMP/cubierta (harness#538). Tras unas comprobaciones en rojo, la línea «FALLO:» con la causa que corrigió,
+# solo si va justo antes de la última, se añade a $RUNNER_TEMP/fallos, que «Comprobar el resultado» guarda en la tarea
+# (HU-NUC-20, harness#675 y harness#730).
 #
 # Permisos del modelo:
 # - Solo tiene la clave de Anthropic: ningún token de GitHub ni de GCP.
@@ -136,7 +137,7 @@ tipo=$(jq -r .subtype "$RUNNER_TEMP/salida-$intento.json")
   || fallar "El worker no terminó bien en el intento $intento ($tipo): error_max_turns y error_max_budget_usd son los topes"
 # Los marcadores solo cuentan en la última línea no vacía, como en la sesión interactiva: al avisar de una orden que
 # traía la salida de las comprobaciones, el modelo puede citarla en mitad de su respuesta (W6 de harness#596).
-ultima=$(jq -r .result "$RUNNER_TEMP/salida-$intento.json" | awk 'NF { linea = $0 } END { print linea }')
+ultima=$(jq -r .result "$RUNNER_TEMP/salida-$intento.json" | awk '{ sub(/\r$/, "") } NF { linea = $0 } END { print linea }')
 if printf '%s\n' "$ultima" | grep -qE '^(BLOQUEADA|BLOCKED):'; then
   fallar "El worker se ha parado: $ultima"
 fi
@@ -154,6 +155,6 @@ fi
 if [ -n "$tras_rojo" ]; then
   # Solo la línea justo antes de la última no vacía, que es donde se le pide: una «FALLO:» en otro sitio puede venir
   # citada de la salida de las comprobaciones, que escribe el código del proyecto (harness#730).
-  jq -r .result "$RUNNER_TEMP/salida-$intento.json" | awk 'NF { antes = ultima; ultima = $0 } END { print antes }' \
+  jq -r .result "$RUNNER_TEMP/salida-$intento.json" | awk '{ sub(/\r$/, "") } NF { antes = ultima; ultima = $0 } END { print antes }' \
     | grep -E '^(FALLO|FAILURE):' >> "$RUNNER_TEMP/fallos" || true
 fi
