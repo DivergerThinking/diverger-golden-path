@@ -540,7 +540,8 @@ jobs:
             echo "## Intento $INTENTO_BUCLE del bucle (job $GITHUB_RUN_ID)"
             echo
             echo "**Motivo:** $(cat "$RUNNER_TEMP/motivo" 2>/dev/null || echo "sin motivo; mira el log del job")"
-            ultimo=$(ls "$RUNNER_TEMP"/comprobaciones-*.log 2>/dev/null | sort | tail -n 1)
+            # Sin ningún log (el job paró antes de las comprobaciones), ls falla: no debe tumbar el diagnóstico.
+            ultimo=$(ls "$RUNNER_TEMP"/comprobaciones-*.log 2>/dev/null | sort | tail -n 1 || true)
             if [ -n "$ultimo" ]; then
               echo
               echo "**Final de las últimas comprobaciones (npm run check):**"
