@@ -143,6 +143,7 @@ describe.skipIf(!HAY_BASH)("script de la comprobación previa", () => {
     // gcp.sh no arregla un valor erróneo de las variables ni un lanzamiento desde otra rama (revisión de la PR #56).
     expect(r.resumen).toContain("- que GCP_WIF_PROVIDER y GCP_TELEMETRY_SA son los valores que imprime gcp.sh al terminar;");
     expect(r.resumen).toContain("- que el bucle se lanza desde main: GCP solo acepta la cuenta desde los workflows de esa rama;");
+    expect(r.resumen).toContain("- el error del paso anterior, por si Google falló en ese momento.");
     expect(r.resumen).toContain("La ejecución se para sin lanzar ningún worker.");
   });
 
