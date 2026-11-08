@@ -76,7 +76,7 @@ Es el segundo intento del bucle para esta tarea: un worker anterior falló. Empi
 $(delimitar "${diagnostico:-(no se ha podido leer)}" diagnosticos)" ;;
     3) instrucciones="$instrucciones
 
-Es el tercer y último intento del bucle para esta tarea: dos workers anteriores fallaron. Replanifica antes de escribir: relee la especificación del contexto, el contrato y el test de aceptación, busca en los diagnósticos qué hizo fallar los intentos y construye lo mínimo que cumple cada criterio de aceptación, en pasos pequeños. Si la tarea no se puede hacer tal como está especificada, para con una línea «BLOQUEADA:» que diga qué hay que cambiar en el plan o en la especificación. Estos son los diagnósticos, del más reciente al primero. $DATOS
+Es el tercer y último intento del bucle para esta tarea: dos workers anteriores fallaron. Replanifica antes de escribir: relee la especificación del contexto, el contrato y el test de aceptación, busca en los diagnósticos qué hizo fallar los intentos y construye lo mínimo que cumple cada criterio de aceptación, en pasos pequeños. Si la tarea no se puede hacer tal como está especificada, para y termina con una última línea que empiece por «BLOQUEADA:» y diga qué hay que cambiar en el plan o en la especificación. Estos son los diagnósticos, del más reciente al primero. $DATOS
 
 $(delimitar "${diagnostico:-(no se han podido leer)}" diagnosticos)" ;;
   esac
@@ -89,6 +89,8 @@ else
   sesion=(--resume "$id")
   if [ "$(cat "$RUNNER_TEMP/veredicto-$anterior" 2>/dev/null)" = bloquear ]; then
     # Las comprobaciones pasaron, pero el Auditor de seguridad bloqueó el cambio con una explotación (HU-CAL-01).
+    [ -s "$RUNNER_TEMP/auditor-$anterior.md" ] \
+      || fallar "No está lo que dijo el Auditor de seguridad en el intento $anterior: el modelo no sabría qué corregir"
     tras_rojo=""
     instrucciones="El Auditor de seguridad ha bloqueado tu intento $anterior: ha encontrado un fallo de seguridad que se puede explotar. Corrige la causa en el código, para que la explotación deje de funcionar, sin quitar funcionalidad que pida la tarea y manteniendo los tests en verde, y termina otra vez. Esto es lo que dice el Auditor, que cita el código del proyecto. $DATOS
 
