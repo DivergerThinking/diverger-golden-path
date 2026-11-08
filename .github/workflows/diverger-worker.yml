@@ -429,13 +429,33 @@ jobs:
           # (HU-NUC-20, harness#675): los caracteres de control pasan a espacios, cada frase se recorta a 300
           # caracteres, sin repetir, y se quedan las tres primeras. Así la sesión de /diverger:run los compara.
           [ -f "$RUNNER_TEMP/fallos" ] || : > "$RUNNER_TEMP/fallos"
-          jq --rawfile f "$RUNNER_TEMP/fallos" '
-            ([$f | split("\n")[] | sub("^(FALLO|FAILURE):"; "") | gsub("[[:cntrl:]]"; " ") | gsub(" +"; " ")
+          jq -n --rawfile f "$RUNNER_TEMP/fallos" '
+            [$f | split("\n")[] | sub("^(FALLO|FAILURE):"; "") | gsub("[[:cntrl:]]"; " ") | gsub(" +"; " ")
               | sub("^ "; "") | sub(" $"; "") | select(length > 0)
               | if length > 300 then (.[0:299] | sub(" +$"; "")) + "…" else . end]
-              | reduce .[] as $x ([]; if index([$x]) then . else . + [$x] end) | .[0:3]) as $fallos
-            | .status = "done" | if ($fallos | length) > 0 then .failures = $fallos else . end' \
+            | reduce .[] as $x ([]; if index([$x]) then . else . + [$x] end) | .[0:3]' > "$RUNNER_TEMP/fallos.json"
+          # Solo cambia en el texto la línea de status y añade debajo la de failures, con su sangría y su final de
+          # línea, como finish_worker en el modo interactivo (harness#728, #727): reescrito entero por jq, con las
+          # listas abiertas en varias líneas, chocaba con una PR del plan que cambió otro campo de la tarea en la base.
+          # Si el texto no da exactamente la tarea esperada (por ejemplo, ya tenía failures), se escribe entero.
+          jq -Rsj --slurpfile fallos "$RUNNER_TEMP/fallos.json" '
+            . as $texto | $fallos[0] as $f
+            | ($texto | fromjson | .status = "done" | if ($f | length) > 0 then .failures = $f else . end) as $esperado
+            | (if ($texto | test("\r\n")) then "\r\n" else "\n" end) as $nl | ($f | tojson) as $v
+            | (if ($f | length) == 0 then $texto | sub("(?<k>\"status\"\\s*:\\s*)\"pending\""; "\(.k)\"done\"")
+               elif ($texto | test("\"failures\"\\s*:")) then null
+               else $texto | sub("(?<ini>^|\n)(?<ind>[^\n]*?)(?<k>\"status\"\\s*:\\s*)\"pending\"(?<c>[ \t]*,)?";
+                 if (.ind | test("^[ \t]*$") | not) then "\(.ini)\(.ind)\(.k)\"done\", \"failures\": \($v)\(.c // "")"
+                 elif .c then "\(.ini)\(.ind)\(.k)\"done\"\(.c)\($nl)\(.ind)\"failures\": \($v),"
+                 else "\(.ini)\(.ind)\(.k)\"done\",\($nl)\(.ind)\"failures\": \($v)" end)
+               end) as $nuevo
+            | if $nuevo != null and (($nuevo | try fromjson catch null) == $esperado) then $nuevo else empty end' \
             "$FICHERO_TAREA" > "$RUNNER_TEMP/tarea.json"
+          if [ ! -s "$RUNNER_TEMP/tarea.json" ]; then
+            jq --slurpfile fallos "$RUNNER_TEMP/fallos.json" \
+              '.status = "done" | if ($fallos[0] | length) > 0 then .failures = $fallos[0] else . end' \
+              "$FICHERO_TAREA" > "$RUNNER_TEMP/tarea.json"
+          fi
           cp "$RUNNER_TEMP/tarea.json" "$FICHERO_TAREA"
           git add "$FICHERO_TAREA"
           git diff --cached --stat

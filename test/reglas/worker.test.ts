@@ -678,6 +678,77 @@ describe.skipIf(!HAY_BASH || !HAY_GIT)("worktree del worker", () => {
       ]);
     });
 
+    // harness#728: el plan escribe una clave por línea, en el orden de task-format.md del núcleo, y las listas en una
+    // sola. Al marcar la tarea solo cambian la línea de status y la de failures, para que una PR del plan que cambió un
+    // campo que no está pegado a status (modules, contracts, dependsOn) se una sin conflicto.
+    const PLAN = '{\n  "schemaVersion": 1,\n  "id": "TA-001",\n  "title": "Préstamos",\n  "status": "pending",\n' +
+      '  "story": "HU-PRE-01",\n  "context": "prestamos",\n  "modules": ["src/prestamos"],\n  "dependsOn": []\n}\n';
+
+    function conPlan(texto: string): void {
+      escribir(repo, FICHERO, texto);
+      git("-c", "user.name=prueba", "-c", "user.email=prueba@example.com", "commit", "-qam", "plan");
+      expect(ejecutar("Crear el worktree").codigo).toBe(0);
+      writeFileSync(join(temp, "comprobaciones"), "verde\n");
+      writeFileSync(join(temp, "auditor"), "comentar\n");
+      escribir(valor("WORKTREE"), "src/prestamos/index.ts", "export const x = 1;\n");
+    }
+
+    function marcada(): string {
+      expect(ejecutar("Comprobar el resultado").codigo).toBe(0);
+      return readFileSync(join(valor("WORKTREE"), FICHERO), "utf8");
+    }
+
+    it("solo cambia la línea de status y añade debajo la de failures (harness#728)", () => {
+      conPlan(PLAN);
+      writeFileSync(join(temp, "fallos"), "FALLO: Falta el índice\n");
+      expect(marcada()).toBe(PLAN.replace('"status": "pending",\n',
+        '"status": "done",\n  "failures": ["Falta el índice"],\n'));
+    });
+
+    it("sin fallos, solo cambia la línea de status (harness#728)", () => {
+      conPlan(PLAN);
+      expect(marcada()).toBe(PLAN.replace('"pending"', '"done"'));
+    });
+
+    it("conserva los finales de línea de Windows (harness#728)", () => {
+      conPlan(PLAN.replaceAll("\n", "\r\n"));
+      writeFileSync(join(temp, "fallos"), "FALLO: Falta el índice\n");
+      expect(marcada()).toBe(PLAN.replace('"status": "pending",\n', '"status": "done",\n  "failures": ["Falta el índice"],\n')
+        .replaceAll("\n", "\r\n"));
+    });
+
+    it("con la tarea en una sola línea, failures va en la misma (harness#728)", () => {
+      conPlan('{"schemaVersion": 1, "id": "TA-001", "title": "x", "status": "pending", "modules": ["src/a"]}\n');
+      writeFileSync(join(temp, "fallos"), "FALLO: Falta el índice\n");
+      expect(marcada()).toBe(
+        '{"schemaVersion": 1, "id": "TA-001", "title": "x", "status": "done", "failures": ["Falta el índice"], "modules": ["src/a"]}\n');
+    });
+
+    it("si la tarea ya tenía failures, la escribe entera con los nuevos (harness#728)", () => {
+      conPlan('{\n  "id": "TA-001",\n  "status": "pending",\n  "failures": ["viejo"]\n}\n');
+      writeFileSync(join(temp, "fallos"), "FALLO: nuevo\n");
+      expect(JSON.parse(marcada())).toEqual({ id: "TA-001", status: "done", failures: ["nuevo"] });
+    });
+
+    it("la PR de la tarea se une sin conflicto con una PR del plan que cambió los módulos (harness#728)", () => {
+      conPlan(PLAN);
+      writeFileSync(join(temp, "fallos"), "FALLO: Falta el índice\n");
+      marcada();
+      const wt = (...args: string[]) =>
+        spawnSync("git", ["-c", "user.name=prueba", "-c", "user.email=prueba@example.com", ...args], { cwd: valor("WORKTREE"), encoding: "utf8" });
+      expect(wt("commit", "-qm", "tarea").status).toBe(0);
+      // Mientras tanto, en la rama base, el plan corrige los módulos de la misma tarea.
+      escribir(repo, FICHERO, PLAN.replace('["src/prestamos"]', '["src/prestamos", "src/equipos"]'));
+      git("-c", "user.name=prueba", "-c", "user.email=prueba@example.com", "commit", "-qam", "plan corregido");
+      const union = spawnSync("git", ["-c", "user.name=prueba", "-c", "user.email=prueba@example.com", "merge", "-q",
+        "--no-edit", "diverger/demo/TA-001"], { cwd: repo, encoding: "utf8" });
+      expect(union.status, union.stdout + union.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(join(repo, FICHERO), "utf8"))).toEqual({
+        schemaVersion: 1, id: "TA-001", title: "Préstamos", status: "done", failures: ["Falta el índice"],
+        story: "HU-PRE-01", context: "prestamos", modules: ["src/prestamos", "src/equipos"], dependsOn: [],
+      });
+    });
+
     it.each([
       ["con las comprobaciones en rojo", (wt: string) => {
         writeFileSync(join(temp, "comprobaciones"), "rojo\n");
