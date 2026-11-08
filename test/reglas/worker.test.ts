@@ -313,6 +313,8 @@ describe("forma del workflow del worker", () => {
     expect(resultado.indexOf("comprobaciones")).toBeLessThan(resultado.indexOf("cubierta"));
     expect(paso("Commit con los trailers").run).toContain('[ ! -s "$RUNNER_TEMP/solo-marca" ] || tipo=chore');
     expect(paso("Rama y PR").run).toContain("**Solo marca la tarea como hecha.**");
+    expect(paso("Rama y PR").run).toContain('bloque "$RUNNER_TEMP/solo-marca"');
+    expect(paso("Rama y PR").run).not.toContain("printf '> %s");
     expect(MODELO_SH).toContain("grep -E '^(YA-CUBIERTA|ALREADY-DONE):'");
     expect(MODELO_SH).toContain('rm -f "$RUNNER_TEMP/cubierta"');
   });
@@ -512,6 +514,33 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe.skipIf(!HAY_BASH || !HAY_JQ)("texto del modelo en la PR (W9 de la auditoría, harness#598)", () => {
+  function bloque(texto: string): string {
+    const definicion = (paso("Rama y PR").run ?? "").split("\n").find((l) => l.trim().startsWith("bloque() {"));
+    expect(definicion).toBeDefined();
+    const fichero = join(temp, "texto");
+    writeFileSync(fichero, texto);
+    const r = spawnSync("bash", ["-c", `${definicion}\nbloque "$1"`, "bash", fichero], { encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout;
+  }
+
+  it("el motivo y lo que dice el Auditor van en un bloque de código, no en una cita", () => {
+    const run = paso("Rama y PR").run ?? "";
+    expect(run).toContain('bloque "$RUNNER_TEMP/solo-marca"');
+    expect(run).toContain('bloque "$ultimo"');
+    expect(run).not.toContain('cat "$ultimo"');
+  });
+
+  it("la valla es más larga que cualquier serie de comillas invertidas del texto", () => {
+    expect(bloque("Lo cubre TA-000, pregunta a @dueno en https://ejemplo.com\n"))
+      .toBe("```text\nLo cubre TA-000, pregunta a @dueno en https://ejemplo.com\n```\n");
+    expect(bloque("a ``` b\n```` c\n")).toBe("`````text\na ``` b\n```` c\n`````\n");
+    expect(bloque("")).toBe("```text\n\n```\n");
+    expect(bloque("a\r\nb\r\n")).toBe("```text\na\r\nb\r\n```\n");
+  });
 });
 
 describe.skipIf(!HAY_BASH)("comprobación de las entradas", () => {
@@ -1109,6 +1138,8 @@ cat "$RUNNER_TEMP/respuesta-claude"`);
       expect(r.veredicto).toBe("comentar");
       expect(r.salidas).toContain("coste=0\n");
       expect(existsSync(join(temp, "args-claude"))).toBe(false);
+      // Deja su informe: la PR no enseña el de un intento anterior como si fuera el último (harness#598).
+      expect(r.md).toBe("Sin cambios en el código: nada que revisar.");
     });
 
     it("si git falla, no da el cambio por bueno: falla cerrado", () => {

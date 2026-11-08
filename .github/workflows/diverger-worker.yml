@@ -514,6 +514,10 @@ jobs:
             "https://x-access-token:$GH_TOKEN@github.com/$repo.git" "HEAD:refs/heads/$RAMA" \
             || fallar "GitHub ha rechazado el push de $RAMA"
           titulo=$(jq -r .title "$FICHERO_TAREA")
+          # Lo que escribió un modelo que ha leído el código del proyecto, en un bloque de código con una valla más
+          # larga que cualquier serie de comillas invertidas del texto: ahí GitHub no avisa a nadie por una @mención
+          # ni enlaza nada (W9 de la auditoría, harness#598). Como terceros.fenced del núcleo.
+          bloque() { jq -Rrs '([scan("`+") | length] | max // 0) as $m | ("`" * ([3, $m + 1] | max)) as $v | "\($v)text\n\(sub("\n+$"; ""))\n\($v)"' "$1"; }
           {
             echo "<!-- diverger:task=$TAREA;run=$EJECUCION -->"
             echo "Tarea **$TAREA** de la iniciativa \`$INICIATIVA\`, ejecución \`$EJECUCION\`."
@@ -523,7 +527,7 @@ jobs:
             if [ -s "$RUNNER_TEMP/solo-marca" ]; then
               echo "**Solo marca la tarea como hecha.** El worker no ha cambiado código porque dice que otra tarea ya la cubre. Revisa que sea así antes de integrarla:"
               echo
-              printf '> %s\n' "$(cat "$RUNNER_TEMP/solo-marca")"
+              bloque "$RUNNER_TEMP/solo-marca"
               echo
             fi
             jq -rs --arg modelo "$MODELO" \
@@ -532,7 +536,10 @@ jobs:
             ultimo=$(ls "$RUNNER_TEMP"/auditor-*.md 2>/dev/null | sort | tail -n 1)
             if [ -n "$ultimo" ]; then
               echo
-              cat "$ultimo"
+              # Aquí el veredicto siempre es comentar: «Comprobar el resultado» para la tarea con cualquier otro.
+              echo "**Auditor de seguridad:** sin fallos explotables en el último intento. Lo que escribió, tal cual:"
+              echo
+              bloque "$ultimo"
             fi
           } > "$RUNNER_TEMP/pr.md"
           url=$(gh pr create -R "$repo" --base "$GITHUB_REF_NAME" --head "$RAMA" \
