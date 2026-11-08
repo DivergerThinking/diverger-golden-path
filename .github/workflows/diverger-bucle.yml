@@ -15,7 +15,8 @@ run-name: diverger-bucle ${{ inputs.initiative }}
 # Al parar, el bucle deja el resultado de cada tarea y de la fase, y el job lo registra en el log
 # diverger-ejecucion de Cloud Logging con la cuenta diverger-telemetry, que solo escribe logs y
 # métricas (EN-TEL-02, ADR 0017 del harness). Unas vistas de BigQuery lo unen al coste y al tiempo
-# de la telemetría de los workers. Sin GCP_WIF_PROVIDER y GCP_TELEMETRY_SA no se registra nada.
+# de la telemetría de los workers. Sin GCP_WIF_PROVIDER y GCP_TELEMETRY_SA el bucle no arranca: la comprobación
+# previa (EN-GP-04, ADR 0049 del harness) para el job antes de lanzar ningún worker.
 
 on:
   workflow_dispatch:
@@ -78,8 +79,9 @@ jobs:
           GCP_ARTIFACT_REPO: ${{ vars.GCP_ARTIFACT_REPO }}
           GCP_TELEMETRY_SA: ${{ vars.GCP_TELEMETRY_SA }}
         run: bash .github/diverger/bucle-previa.sh secreto-y-variables
-      # Con token_format, la acción pide de verdad un token de la cuenta de telemetría: sin él solo escribe un fichero
-      # de credenciales y no prueba nada. La cuenta solo la aceptan los repositorios que gcp.sh tiene en REPOS.
+      # Sin token_format, la acción solo canjea el token de GitHub en el STS de Google, y el proveedor acepta cualquier
+      # repositorio de la organización. Con access_token pide además un token de la cuenta de telemetría, que solo
+      # aceptan los repositorios que gcp.sh tiene en REPOS. Es una sonda: el token dura 5 minutos y no exporta nada.
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         id: previa-gcp
         continue-on-error: true
@@ -87,7 +89,9 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_TELEMETRY_SA }}
           token_format: access_token
+          access_token_lifetime: 300s
           create_credentials_file: false
+          export_environment_variables: false
       - name: Comprobación previa del acceso a GCP
         env:
           RESULTADO: ${{ steps.previa-gcp.outcome }}
@@ -177,15 +181,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
       # Después del bucle, que puede durar horas: el token de GCP dura una. Si el registro falla, el
-      # job no falla por eso: solo se pierde la fila (ADR 0017).
+      # job no falla por eso: solo se pierde la fila (ADR 0017). Sin el estado recuperado el bucle no ha corrido, por
+      # ejemplo si la comprobación previa paró el job, y no hay nada que registrar.
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
-        if: always() && env.TELEMETRIA == 'true'
+        if: always() && env.TELEMETRIA == 'true' && steps.estado.outcome == 'success'
         continue-on-error: true
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_TELEMETRY_SA }}
       - name: Registrar el resultado
-        if: always() && env.TELEMETRIA == 'true'
+        if: always() && env.TELEMETRIA == 'true' && steps.estado.outcome == 'success'
         continue-on-error: true
         run: |
           resultados="$RUNNER_TEMP/resultados.jsonl"

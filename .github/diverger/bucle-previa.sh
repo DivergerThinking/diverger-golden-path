@@ -43,10 +43,15 @@ case "${1:-}" in
     if [ "${2:-}" = success ]; then
       resumen "- [OK] La federación de identidades de GCP deja entrar a $GITHUB_REPOSITORY con la cuenta de telemetría"
     else
-      # El acceso de cada repositorio lo concede gcp.sh con REPOS: sin él, GCP no deja usar la cuenta desde aquí.
+      # El acceso de cada repositorio lo concede gcp.sh con REPOS: sin él, GCP no deja usar la cuenta desde aquí. Si la
+      # orden no lo arregla, el motivo está en los valores de las variables o en la rama.
       error "La federación de identidades de GCP no responde para $GITHUB_REPOSITORY" \
         "PROJECT_ID=${GCP_PROJECT_ID:-<GCP_PROJECT_ID>} REPOS=${GITHUB_REPOSITORY#*/} ./infra/entornos/gcp.sh"
-      resumen "" "La orden se ejecuta en el harness con una sesión de administración de GCP. La ejecución se para sin lanzar ningún worker."
+      resumen "" "La orden se ejecuta en el harness con una sesión de administración de GCP. Si ya lo tenía, comprueba:" \
+        "- que GCP_WIF_PROVIDER y GCP_TELEMETRY_SA son los valores que imprime gcp.sh al terminar;" \
+        "- que el bucle se lanza desde main: GCP solo acepta la cuenta desde los workflows de esa rama;" \
+        "- el error del paso anterior, por si Google falló en ese momento." \
+        "" "La ejecución se para sin lanzar ningún worker."
       exit 1
     fi
     resumen "" "La ejecución puede empezar."

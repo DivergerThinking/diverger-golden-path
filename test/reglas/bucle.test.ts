@@ -89,7 +89,7 @@ describe("workflow del bucle desatendido", () => {
     expect(auth).toBeLessThan(registro);
     expect(paso("Bucle").run).toContain('--results "$RUNNER_TEMP/resultados.jsonl"');
     const registrar = PASOS[registro] as Paso & { if?: string; "continue-on-error"?: boolean };
-    expect(registrar.if).toBe("always() && env.TELEMETRIA == 'true'");
+    expect(registrar.if).toBe("always() && env.TELEMETRIA == 'true' && steps.estado.outcome == 'success'");
     expect(registrar["continue-on-error"]).toBe(true);
     expect(registrar.run).toContain("gcloud logging write diverger-ejecucion \"$linea\" --payload-type=json");
     // gcloud solo escribe ese log: nada de despliegues ni de lecturas de GCP.

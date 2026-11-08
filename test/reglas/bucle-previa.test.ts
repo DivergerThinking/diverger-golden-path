@@ -58,10 +58,21 @@ describe("forma de la comprobación previa en el bucle", () => {
     expect(gcp?.uses).toMatch(/^google-github-actions\/auth@[0-9a-f]{40}$/);
     expect(gcp?.["continue-on-error"]).toBe(true);
     expect(gcp?.with).toEqual({ workload_identity_provider: "${{ vars.GCP_WIF_PROVIDER }}",
-      service_account: "${{ vars.GCP_TELEMETRY_SA }}", token_format: "access_token", create_credentials_file: false });
+      service_account: "${{ vars.GCP_TELEMETRY_SA }}", token_format: "access_token", access_token_lifetime: "300s",
+      create_credentials_file: false, export_environment_variables: false });
     const despues = PASOS[indice("Comprobación previa del acceso a GCP")];
     expect(despues?.env).toEqual({ RESULTADO: "${{ steps.previa-gcp.outcome }}" });
     expect(despues?.run).toBe('bash .github/diverger/bucle-previa.sh gcp "$RESULTADO"');
+  });
+});
+
+describe("si la comprobación previa para el job", () => {
+  it("no se sube run.json ni se pide otro token ni se registra nada: el bucle no ha corrido", () => {
+    // «Recuperar el estado anterior» va después de la comprobación: si esta falla, no corre.
+    expect(indice("Comprobación previa del acceso a GCP")).toBeLessThan(indice("estado"));
+    const finales = PASOS.slice(indice("Bucle") + 1);
+    expect(finales.length).toBe(3);
+    for (const paso of finales) expect(paso.if, paso.name ?? paso.uses).toMatch(/^always\(\) && .*steps\.estado\.outcome == 'success'$/);
   });
 });
 
@@ -129,6 +140,9 @@ describe.skipIf(!HAY_BASH)("script de la comprobación previa", () => {
     expect(r.codigo).toBe(1);
     expect(r.salida).toContain(`::error::La federación de identidades de GCP no responde para ${REPO}`);
     expect(r.resumen).toContain("`PROJECT_ID=diverger-exp-harness REPOS=diverger-nivel-0 ./infra/entornos/gcp.sh`");
+    // gcp.sh no arregla un valor erróneo de las variables ni un lanzamiento desde otra rama (revisión de la PR #56).
+    expect(r.resumen).toContain("- que GCP_WIF_PROVIDER y GCP_TELEMETRY_SA son los valores que imprime gcp.sh al terminar;");
+    expect(r.resumen).toContain("- que el bucle se lanza desde main: GCP solo acepta la cuenta desde los workflows de esa rama;");
     expect(r.resumen).toContain("La ejecución se para sin lanzar ningún worker.");
   });
 
