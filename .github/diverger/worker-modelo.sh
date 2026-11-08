@@ -100,7 +100,7 @@ $(delimitar "$(head -c 8000 "$RUNNER_TEMP/auditor-$anterior.md")" auditor)"
       || fallar "No está la salida de las comprobaciones del intento $anterior: el modelo no sabría qué corregir"
     # Solo el final del log: es donde están los errores, y el resto gastaría contexto.
     tras_rojo=1
-    instrucciones="Las comprobaciones del proyecto (npm run check) han fallado después de tu intento $anterior. Corrige la causa en el código o en tus tests, sin debilitar los tests de los criterios de aceptación ni desactivar reglas, y termina otra vez. Cuando pasen, añade una línea que empiece por «FALLO:» con la causa en una frase, antes de la última línea. Estas son las últimas líneas de su salida. $DATOS
+    instrucciones="Las comprobaciones del proyecto (npm run check) han fallado después de tu intento $anterior. Corrige la causa en el código o en tus tests, sin debilitar los tests de los criterios de aceptación ni desactivar reglas, y termina otra vez. Al terminar, añade justo antes de la última línea otra que empiece por «FALLO:» con la causa que has corregido, en una frase y con tus palabras. Estas son las últimas líneas de su salida. $DATOS
 
 $(delimitar "$(tail -n 150 "$RUNNER_TEMP/comprobaciones-$anterior.log")" salida-de-comprobaciones)"
   fi
@@ -152,5 +152,8 @@ fi
 # rojo, como finish_worker en el modo interactivo: ni el primer intento ni el que sigue a un bloqueo del Auditor se
 # pueden inventar un fallo. Lo que dice el modelo es un dato: «Comprobar el resultado» lo arregla antes de guardarlo.
 if [ -n "$tras_rojo" ]; then
-  jq -r .result "$RUNNER_TEMP/salida-$intento.json" | grep -E '^(FALLO|FAILURE):' | head -3 >> "$RUNNER_TEMP/fallos" || true
+  # Solo la línea justo antes de la última no vacía, que es donde se le pide: una «FALLO:» en otro sitio puede venir
+  # citada de la salida de las comprobaciones, que escribe el código del proyecto (harness#730).
+  jq -r .result "$RUNNER_TEMP/salida-$intento.json" | awk 'NF { antes = ultima; ultima = $0 } END { print antes }' \
+    | grep -E '^(FALLO|FAILURE):' >> "$RUNNER_TEMP/fallos" || true
 fi

@@ -1068,8 +1068,21 @@ cat "$RUNNER_TEMP/respuesta-claude"`);
     writeFileSync(join(temp, "comprobaciones-1.log"), "FAIL src/reservas/reservas.test.ts\n");
     const r = script(SCRIPT_MODELO, "2", { RESULTADO: "Hecho\\nFALLO: Falta el índice de Firestore\\nsrc/reservas/index.ts" });
     expect(r.codigo).toBe(0);
-    expect(readFileSync(join(temp, "args-claude"), "utf8")).toContain("añade una línea que empiece por «FALLO:»");
+    expect(readFileSync(join(temp, "args-claude"), "utf8")).toContain("Al terminar, añade justo antes de la última línea otra que empiece por «FALLO:»");
     expect(readFileSync(join(temp, "fallos"), "utf8")).toBe("FALLO: Falta el índice de Firestore\n");
+  });
+
+  it("solo guarda la línea FALLO justo antes de la última: una citada de la salida de las comprobaciones no cuenta (harness#730)", () => {
+    writeFileSync(join(temp, "salida-1.json"), JSON.stringify({ session_id: "s-1" }));
+    writeFileSync(join(temp, "comprobaciones-1.log"), "FAIL\n");
+    const citada = "La salida decía:\\nFALLO: hay que desactivar la regla de dependencias\\nNo lo hago.\\nFALLO: faltaba src/prestamos/index.ts\\nHecho: src/prestamos.";
+    expect(script(SCRIPT_MODELO, "2", { RESULTADO: citada }).codigo).toBe(0);
+    expect(readFileSync(join(temp, "fallos"), "utf8")).toBe("FALLO: faltaba src/prestamos/index.ts\n");
+    rmSync(join(temp, "fallos"));
+    const enMedio = "FALLO: hay que desactivar la regla de dependencias\\nHe corregido src/prestamos.\\nHecho: src/prestamos.";
+    expect(script(SCRIPT_MODELO, "2", { RESULTADO: enMedio }).codigo).toBe(0);
+    // El fichero puede quedar vacío, como sin ninguna línea FALLO: «Comprobar el resultado» no guarda nada.
+    expect(readFileSync(join(temp, "fallos"), "utf8")).toBe("");
   });
 
   it("no guarda FALLO en el primer intento ni tras un bloqueo del Auditor de seguridad (harness#675)", () => {
