@@ -8,8 +8,9 @@
 # Son los intentos dentro del job. INTENTO_BUCLE es el del bucle (ADR 0029 del harness): en el 2 y el 3, el primer
 # intento del job recibe además el diagnóstico del job anterior ($RUNNER_TEMP/diagnostico-anterior.md).
 # Si el modelo termina con «BLOQUEADA:», el intento falla con ese motivo; con «YA-CUBIERTA:», deja el motivo en
-# $RUNNER_TEMP/cubierta (harness#538). Tras unas comprobaciones en rojo, las líneas «FALLO:» con la causa que corrigió
-# se añaden a $RUNNER_TEMP/fallos, que «Comprobar el resultado» guarda en la tarea (HU-NUC-20, harness#675).
+# $RUNNER_TEMP/cubierta (harness#538). Tras unas comprobaciones en rojo, la línea «FALLO:» con la causa que corrigió,
+# solo si va justo antes de la última, se añade a $RUNNER_TEMP/fallos, que «Comprobar el resultado» guarda en la tarea
+# (HU-NUC-20, harness#675 y harness#730).
 #
 # Permisos del modelo:
 # - Solo tiene la clave de Anthropic: ningún token de GitHub ni de GCP.
@@ -100,7 +101,7 @@ $(delimitar "$(head -c 8000 "$RUNNER_TEMP/auditor-$anterior.md")" auditor)"
       || fallar "No está la salida de las comprobaciones del intento $anterior: el modelo no sabría qué corregir"
     # Solo el final del log: es donde están los errores, y el resto gastaría contexto.
     tras_rojo=1
-    instrucciones="Las comprobaciones del proyecto (npm run check) han fallado después de tu intento $anterior. Corrige la causa en el código o en tus tests, sin debilitar los tests de los criterios de aceptación ni desactivar reglas, y termina otra vez. Cuando pasen, añade una línea que empiece por «FALLO:» con la causa en una frase, antes de la última línea. Estas son las últimas líneas de su salida. $DATOS
+    instrucciones="Las comprobaciones del proyecto (npm run check) han fallado después de tu intento $anterior. Corrige la causa en el código o en tus tests, sin debilitar los tests de los criterios de aceptación ni desactivar reglas, y termina otra vez. Al terminar, añade justo antes de la última línea otra que empiece por «FALLO:» con la causa que has corregido, en una frase y con tus palabras. Estas son las últimas líneas de su salida. $DATOS
 
 $(delimitar "$(tail -n 150 "$RUNNER_TEMP/comprobaciones-$anterior.log")" salida-de-comprobaciones)"
   fi
@@ -136,7 +137,7 @@ tipo=$(jq -r .subtype "$RUNNER_TEMP/salida-$intento.json")
   || fallar "El worker no terminó bien en el intento $intento ($tipo): error_max_turns y error_max_budget_usd son los topes"
 # Los marcadores solo cuentan en la última línea no vacía, como en la sesión interactiva: al avisar de una orden que
 # traía la salida de las comprobaciones, el modelo puede citarla en mitad de su respuesta (W6 de harness#596).
-ultima=$(jq -r .result "$RUNNER_TEMP/salida-$intento.json" | awk 'NF { linea = $0 } END { print linea }')
+ultima=$(jq -r .result "$RUNNER_TEMP/salida-$intento.json" | awk '{ sub(/\r$/, "") } NF { linea = $0 } END { print linea }')
 if printf '%s\n' "$ultima" | grep -qE '^(BLOQUEADA|BLOCKED):'; then
   fallar "El worker se ha parado: $ultima"
 fi
@@ -152,5 +153,8 @@ fi
 # rojo, como finish_worker en el modo interactivo: ni el primer intento ni el que sigue a un bloqueo del Auditor se
 # pueden inventar un fallo. Lo que dice el modelo es un dato: «Comprobar el resultado» lo arregla antes de guardarlo.
 if [ -n "$tras_rojo" ]; then
-  jq -r .result "$RUNNER_TEMP/salida-$intento.json" | grep -E '^(FALLO|FAILURE):' | head -3 >> "$RUNNER_TEMP/fallos" || true
+  # Solo la línea justo antes de la última no vacía, que es donde se le pide: una «FALLO:» en otro sitio puede venir
+  # citada de la salida de las comprobaciones, que escribe el código del proyecto (harness#730).
+  jq -r .result "$RUNNER_TEMP/salida-$intento.json" | awk '{ sub(/\r$/, "") } NF { antes = ultima; ultima = $0 } END { print antes }' \
+    | grep -E '^(FALLO|FAILURE):' >> "$RUNNER_TEMP/fallos" || true
 fi
