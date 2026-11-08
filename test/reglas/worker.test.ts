@@ -724,6 +724,18 @@ describe.skipIf(!HAY_BASH || !HAY_GIT)("worktree del worker", () => {
         '{"schemaVersion": 1, "id": "TA-001", "title": "x", "status": "done", "failures": ["Falta el índice"], "modules": ["src/a"]}\n');
     });
 
+    it("con status como última clave, añade la coma y failures debajo (harness#728)", () => {
+      conPlan('{\n  "id": "TA-001",\n  "status": "pending"\n}\n');
+      writeFileSync(join(temp, "fallos"), "FALLO: Falta el índice\n");
+      expect(marcada()).toBe('{\n  "id": "TA-001",\n  "status": "done",\n  "failures": ["Falta el índice"]\n}\n');
+    });
+
+    it("con una clave que acaba en status antes de la real, la escribe entera (harness#728)", () => {
+      conPlan('{\n  "id": "TA-001",\n  "\\"status": "pending",\n  "status": "pending"\n}\n');
+      writeFileSync(join(temp, "fallos"), "FALLO: Falta el índice\n");
+      expect(JSON.parse(marcada())).toEqual({ id: "TA-001", '"status': "pending", status: "done", failures: ["Falta el índice"] });
+    });
+
     it("si la tarea ya tenía failures, la escribe entera con los nuevos (harness#728)", () => {
       conPlan('{\n  "id": "TA-001",\n  "status": "pending",\n  "failures": ["viejo"]\n}\n');
       writeFileSync(join(temp, "fallos"), "FALLO: nuevo\n");

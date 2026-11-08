@@ -436,7 +436,8 @@ jobs:
             | reduce .[] as $x ([]; if index([$x]) then . else . + [$x] end) | .[0:3]' > "$RUNNER_TEMP/fallos.json"
           # Solo cambia en el texto la línea de status y añade debajo la de failures, con su sangría y su final de
           # línea, como finish_worker en el modo interactivo (harness#728, #727): reescrito entero por jq, con las
-          # listas abiertas en varias líneas, chocaba con una PR del plan que cambió otro campo de la tarea en la base.
+          # listas abiertas en varias líneas, chocaba con una PR del plan que cambió otro campo de la tarea en la base
+          # (uno que no esté en la línea de al lado de status, como modules).
           # Si el texto no da exactamente la tarea esperada (por ejemplo, ya tenía failures), se escribe entero.
           jq -Rsj --slurpfile fallos "$RUNNER_TEMP/fallos.json" '
             . as $texto | $fallos[0] as $f
