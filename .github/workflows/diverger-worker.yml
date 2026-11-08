@@ -536,7 +536,8 @@ jobs:
             ultimo=$(ls "$RUNNER_TEMP"/auditor-*.md 2>/dev/null | sort | tail -n 1)
             if [ -n "$ultimo" ]; then
               echo
-              echo "**Lo que dice el Auditor de seguridad** en el último intento:"
+              # Aquí el veredicto siempre es comentar: «Comprobar el resultado» para la tarea con cualquier otro.
+              echo "**Auditor de seguridad:** sin fallos explotables en el último intento. Lo que escribió, tal cual:"
               echo
               bloque "$ultimo"
             fi

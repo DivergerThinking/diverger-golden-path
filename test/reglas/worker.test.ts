@@ -516,7 +516,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe.skipIf(!HAY_BASH)("texto del modelo en la PR (W9 de la auditoría, harness#598)", () => {
+describe.skipIf(!HAY_BASH || !HAY_JQ)("texto del modelo en la PR (W9 de la auditoría, harness#598)", () => {
   function bloque(texto: string): string {
     const definicion = (paso("Rama y PR").run ?? "").split("\n").find((l) => l.trim().startsWith("bloque() {"));
     expect(definicion).toBeDefined();
@@ -538,6 +538,8 @@ describe.skipIf(!HAY_BASH)("texto del modelo en la PR (W9 de la auditoría, harn
     expect(bloque("Lo cubre TA-000, pregunta a @dueno en https://ejemplo.com\n"))
       .toBe("```text\nLo cubre TA-000, pregunta a @dueno en https://ejemplo.com\n```\n");
     expect(bloque("a ``` b\n```` c\n")).toBe("`````text\na ``` b\n```` c\n`````\n");
+    expect(bloque("")).toBe("```text\n\n```\n");
+    expect(bloque("a\r\nb\r\n")).toBe("```text\na\r\nb\r\n```\n");
   });
 });
 
@@ -1136,6 +1138,8 @@ cat "$RUNNER_TEMP/respuesta-claude"`);
       expect(r.veredicto).toBe("comentar");
       expect(r.salidas).toContain("coste=0\n");
       expect(existsSync(join(temp, "args-claude"))).toBe(false);
+      // Deja su informe: la PR no enseña el de un intento anterior como si fuera el último (harness#598).
+      expect(r.md).toBe("Sin cambios en el código: nada que revisar.");
     });
 
     it("si git falla, no da el cambio por bueno: falla cerrado", () => {
