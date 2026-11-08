@@ -140,6 +140,22 @@ describe.skipIf(!HAY_GIT)("la PR de una tarea y la suite de aceptación", () => 
     }
   });
 
+  it("la PR de la aplicación de un cambio, en cambio/<iniciativa>/C-NNN, no es de una tarea: regenera la suite (harness#35)", () => {
+    // /diverger-architect:apply aplica un delta integrado y regenera el .feature de las historias construidas que cambia
+    // (ADR 0050 del harness). La PR la hace un agente en la sesión de una persona, con sus trailers.
+    escribir("tests/aceptacion/HU-PRE-02.feature", "# language: es\nCaracterística: Ver los equipos, regenerada\n");
+    commit("chore: aplica el cambio C-001", ["--trailer", "Diverger-Rol: Arquitecto", "--trailer", "Diverger-Tarea: C-001"]);
+    const cambio = comprobar("cambio/prestamo-de-equipos/C-001");
+    expect(cambio.codigo).toBe(0);
+    expect(cambio.salida).toBe("modificada=true\n");
+    expect(cambio.resumen).toContain("CODEOWNERS pide la aprobación de un propietario");
+    // Solo esa forma: la iniciativa en minúsculas y guiones, y C- con tres cifras.
+    for (const rama of ["cambio/prestamo/C-1", "cambio/prestamo/C-0001", "cambio/Prestamo/C-001", "cambio/prestamo",
+      "cambio/prestamo/C-001/x", "otro/cambio/prestamo/C-001", "diverger/cambio/C-001", "cambio//C-001"]) {
+      expect(comprobar(rama).codigo, rama).toBe(1);
+    }
+  });
+
   it("una suite cambiada en main después de abrir la PR no cuenta como de la PR", () => {
     git(["checkout", "-q", "-b", "tarea"]);
     escribir("src/prestamos/servicio.ts", "export const x = 2;\n");
