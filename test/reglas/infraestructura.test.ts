@@ -266,7 +266,7 @@ resource "google_project_iam_member" "malo" {
 
   it("si una cadena o un bloque no se cierra, falla en vez de fiarse de lo leído", () => {
     for (const tf of ['resource "google_project_iam_member" "x" {\n  role = "roles/owner', 'resource "a" "b" {\n',
-      'locals {\n  x = "\${"\n}\n']) {
+      'locals {\n  x = "${"\n}\n']) {
       expect(iam(tf)).toEqual({ codigo: 1, errores: ["no se puede leer: una cadena, un heredoc o un bloque no se cierra"] });
     }
   });
