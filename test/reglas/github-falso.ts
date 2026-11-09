@@ -19,8 +19,10 @@ export interface Ejecucion {
 export interface Datos {
   ejecuciones: Ejecucion[];
   usuarios: Record<string, { id: number; name: string | null }>;
-  /** Las PR por número, con su descripción actual (EN-OPS-07). */
-  prs?: Record<string, { body: string | null }>;
+  /** Las PR por número, con su descripción actual (EN-OPS-07) y, para la política «otra persona» (EN-OPS-10), sus
+   * commits y sus revisiones. */
+  prs?: Record<string, { body: string | null; commits?: { commit: { message: string } }[];
+    reviews?: { user: { login: string; type?: string }; state: string }[] }>;
 }
 
 export const REPO = "DivergerThinking/app-de-prueba";
@@ -58,6 +60,13 @@ function responder(datos: Datos, url: URL): unknown {
   }
   const pr = new RegExp(`^/repos/${REPO}/pulls/([0-9]+)$`).exec(url.pathname);
   if (pr) return datos.prs?.[pr[1] ?? ""];
+  // Listas paginadas de 100: la página 2 y siguientes, vacías si caben en una.
+  const lista = new RegExp(`^/repos/${REPO}/pulls/([0-9]+)/(commits|reviews)$`).exec(url.pathname);
+  if (lista) {
+    const todos = datos.prs?.[lista[1] ?? ""]?.[lista[2] as "commits" | "reviews"];
+    const pagina = Number(url.searchParams.get("page") ?? "1");
+    return todos ? todos.slice((pagina - 1) * 100, pagina * 100) : undefined;
+  }
   const usuario = /^\/users\/([^/]+)$/.exec(url.pathname);
   if (!usuario) return undefined;
   const login = decodeURIComponent(usuario[1] ?? "");
