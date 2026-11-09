@@ -21,8 +21,10 @@ export interface Datos {
   usuarios: Record<string, { id: number; name: string | null }>;
   /** Las PR por número, con su descripción actual (EN-OPS-07) y, para la política «otra persona» (EN-OPS-10), sus
    * commits y sus revisiones. */
-  prs?: Record<string, { body: string | null; commits?: { commit: { message: string } }[];
-    reviews?: { user: { login: string; type?: string }; state: string }[] }>;
+  prs?: Record<string, { body: string | null; user?: { login: string; type?: string }; head?: { sha: string };
+    /** Cuántos commits tiene, como lo da la API, y la lista que devuelve /commits. */
+    commits?: number; listaDeCommits?: { commit: { message: string } }[];
+    reviews?: { user: { login: string; type?: string }; state: string; commit_id?: string; author_association?: string }[] }>;
 }
 
 export const REPO = "DivergerThinking/app-de-prueba";
@@ -63,7 +65,8 @@ function responder(datos: Datos, url: URL): unknown {
   // Listas paginadas de 100: la página 2 y siguientes, vacías si caben en una.
   const lista = new RegExp(`^/repos/${REPO}/pulls/([0-9]+)/(commits|reviews)$`).exec(url.pathname);
   if (lista) {
-    const todos = datos.prs?.[lista[1] ?? ""]?.[lista[2] as "commits" | "reviews"];
+    const pr = datos.prs?.[lista[1] ?? ""];
+    const todos = lista[2] === "commits" ? pr?.listaDeCommits : pr?.reviews;
     const pagina = Number(url.searchParams.get("page") ?? "1");
     return todos ? todos.slice((pagina - 1) * 100, pagina * 100) : undefined;
   }

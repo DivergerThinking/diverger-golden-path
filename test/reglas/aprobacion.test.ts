@@ -13,7 +13,9 @@ const RAIZ = join(import.meta.dirname, "..", "..");
 const SCRIPT = join(RAIZ, "scripts", "aprobacion.mjs");
 const MENSAJE = "La aprobación tiene que ser de una persona distinta de quien lanzó el harness";
 
-type Revision = { user: { login: string; type?: string }; state: string };
+type Revision = { user: { login: string; type?: string }; state: string; commit_id?: string; author_association?: string };
+const CABEZA = "c0ffee";
+const HARNESS = { login: "diverger-harness[bot]", type: "Bot" };
 
 function commitDelHarness(quien: string) {
   return { commit: { message: `feat: TA-004 Prestar un equipo\n\nDiverger-Rol: Desarrollador\nDiverger-Iniciado-por: ${quien}` } };
@@ -29,13 +31,16 @@ afterEach(() => {
 });
 
 async function comprobar(politica: string | undefined, revisiones: Revision[],
-  commits = [commitDelHarness("ana-lopez")]): Promise<{ codigo: number; salida: string }> {
+  commits = [commitDelHarness("ana-lopez")], extra: { commits?: number; user?: { login: string; type?: string } } = {},
+): Promise<{ codigo: number; salida: string }> {
   carpeta = mkdtempSync(join(tmpdir(), "aprobacion-"));
   if (politica !== undefined) {
     mkdirSync(join(carpeta, ".diverger"));
     writeFileSync(join(carpeta, ".diverger", "settings.json"), JSON.stringify({ approvalPolicy: politica }));
   }
-  const datos: Datos = { ejecuciones: [], usuarios: {}, prs: { 55: { body: "", commits, reviews: revisiones } } };
+  const datos: Datos = { ejecuciones: [], usuarios: {}, prs: { 55: {
+    body: "", user: HARNESS, head: { sha: CABEZA }, commits: commits.length, listaDeCommits: commits, reviews: revisiones,
+    ...extra } } };
   const api = await arrancar(datos);
   servidor = api.servidor;
   try {
@@ -50,7 +55,8 @@ async function comprobar(politica: string | undefined, revisiones: Revision[],
   }
 }
 
-const aprueba = (login: string, state = "APPROVED"): Revision => ({ user: { login }, state });
+const aprueba = (login: string, state = "APPROVED", otros: Partial<Revision> = {}): Revision =>
+  ({ user: { login }, state, commit_id: CABEZA, author_association: "COLLABORATOR", ...otros });
 
 describe("política «otra persona» (EN-OPS-10 del harness)", () => {
   it("criterio positivo: lanzada por ana-lopez y aprobada por luis-gil, pasa", async () => {
@@ -79,7 +85,7 @@ describe("política «otra persona» (EN-OPS-10 del harness)", () => {
 
   it("la aprobación de una GitHub App no cuenta, y quien lanzó se compara sin mayúsculas", async () => {
     expect((await comprobar("otra-persona", [aprueba("diverger-harness[bot]")])).codigo).toBe(1);
-    expect((await comprobar("otra-persona", [{ user: { login: "renovate", type: "Bot" }, state: "APPROVED" }])).codigo)
+    expect((await comprobar("otra-persona", [{ ...aprueba("renovate"), user: { login: "renovate", type: "Bot" } }])).codigo)
       .toBe(1);
     expect((await comprobar("otra-persona", [aprueba("Ana-Lopez")])).codigo).toBe(1);
   });
@@ -90,9 +96,31 @@ describe("política «otra persona» (EN-OPS-10 del harness)", () => {
       expect(r.codigo, String(politica)).toBe(0);
       expect(r.salida).toContain("no hay nada que comprobar");
     }
-    const sinHarness = await comprobar("otra-persona", [], [{ commit: { message: "fix: un arreglo de una persona" } }]);
+    const sinHarness = await comprobar("otra-persona", [], [{ commit: { message: "fix: un arreglo de una persona" } }],
+      { user: { login: "luis-gil" } });
     expect(sinHarness.codigo).toBe(0);
     expect(sinHarness.salida).toContain("La PR no tiene commits del harness");
+  });
+
+  it("solo cuenta una aprobación del último commit y de alguien con acceso al repositorio (revisión de seguridad)", async () => {
+    expect((await comprobar("otra-persona", [aprueba("luis-gil", "APPROVED", { commit_id: "viejo" })])).codigo).toBe(1);
+    for (const asociacion of ["NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", undefined]) {
+      expect((await comprobar("otra-persona", [aprueba("luis-gil", "APPROVED", { author_association: asociacion })])).codigo,
+        String(asociacion)).toBe(1);
+    }
+    for (const asociacion of ["OWNER", "MEMBER", "COLLABORATOR"]) {
+      expect((await comprobar("otra-persona", [aprueba("luis-gil", "APPROVED", { author_association: asociacion })])).codigo,
+        asociacion).toBe(0);
+    }
+  });
+
+  it("con los datos incompletos, falla: más commits de los leídos, o una PR de la App sin quien la lanzó", async () => {
+    const truncada = await comprobar("otra-persona", [aprueba("luis-gil")], [commitDelHarness("ana-lopez")], { commits: 300 });
+    expect(truncada.codigo).toBe(1);
+    expect(truncada.salida).toContain("No se pueden leer todos los commits de la PR (300)");
+    const sinQuien = await comprobar("otra-persona", [aprueba("luis-gil")], [{ commit: { message: "feat: algo" } }]);
+    expect(sinQuien.codigo).toBe(1);
+    expect(sinQuien.salida).toContain("La PR la abre diverger-harness[bot] y ningún commit dice quién lanzó el harness");
   });
 
   it("si la API falla, falla", async () => {

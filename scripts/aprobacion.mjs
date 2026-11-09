@@ -23,26 +23,43 @@ export function lanzadores(commits) {
   return logins;
 }
 
-/** Quiénes tienen la PR aprobada: la última revisión de cada persona que no sea un comentario, si es una aprobación.
- * Las cuentas de GitHub Apps no cuentan. */
-export function aprobadores(revisiones) {
+// Solo cuenta quien tiene acceso al repositorio: en uno público, cualquiera puede dejar una aprobación (revisión de
+// seguridad de la PR #63).
+const CON_ACCESO = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+
+/** Quiénes tienen aprobado el último commit de la PR: la última revisión de cada persona que no sea un comentario, si
+ * es una aprobación de ese commit y la persona tiene acceso al repositorio. Las cuentas de GitHub Apps no cuentan. */
+export function aprobadores(revisiones, cabeza) {
   const ultima = new Map();
   for (const revision of revisiones) {
     const login = String(revision?.user?.login ?? "");
     if (!login || esBot(login) || revision?.user?.type === "Bot" || revision?.state === "COMMENTED") continue;
-    ultima.set(login.toLowerCase(), revision.state);
+    ultima.set(login.toLowerCase(), revision);
   }
-  return [...ultima].filter(([, estado]) => estado === "APPROVED").map(([login]) => login);
+  return [...ultima].filter(([, revision]) => revision.state === "APPROVED" && revision.commit_id === cabeza
+    && CON_ACCESO.has(revision.author_association)).map(([login]) => login);
 }
 
 /** El veredicto: { ok, mensaje }. */
-export function decidir({ politica, commits, revisiones }) {
+export const MAX_COMMITS = 250; // Lo más que devuelve la API de los commits de una PR.
+
+export function decidir({ politica, pr, commits, revisiones }) {
   if (politica !== "otra-persona") {
     return { ok: true, mensaje: `La política de aprobación es «${politica ?? "sin fijar"}»: no hay nada que comprobar` };
   }
+  // Con los datos incompletos no se da por buena (revisión de seguridad de la PR #63).
+  if ((pr?.commits ?? 0) > commits.length || commits.length >= MAX_COMMITS) {
+    return { ok: false, mensaje: `No se pueden leer todos los commits de la PR (${pr?.commits ?? commits.length}): ${MENSAJE}` };
+  }
   const quienes = lanzadores(commits);
-  if (quienes.size === 0) return { ok: true, mensaje: "La PR no tiene commits del harness: no hay nada que comprobar" };
-  const otros = aprobadores(revisiones).filter((login) => !quienes.has(login));
+  if (quienes.size === 0) {
+    // La abre una GitHub App, como la identidad del harness, y no dice quién la lanzó: no se sabe a quién excluir.
+    if (esBot(pr?.user?.login) || pr?.user?.type === "Bot") {
+      return { ok: false, mensaje: `La PR la abre ${pr.user.login} y ningún commit dice quién lanzó el harness: ${MENSAJE}` };
+    }
+    return { ok: true, mensaje: "La PR no tiene commits del harness: no hay nada que comprobar" };
+  }
+  const otros = aprobadores(revisiones, pr?.head?.sha).filter((login) => !quienes.has(login));
   if (otros.length) {
     return { ok: true, mensaje: `Aprobada por ${otros.map((l) => `@${l}`).join(", ")}, distinta de quien lanzó el harness`
       + ` (${[...quienes].map((l) => `@${l}`).join(", ")})` };
@@ -80,11 +97,11 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   try {
     const politica = politicaDeLaRamaBase();
     const api = apiDeGitHub();
-    const [commits, revisiones] = politica === "otra-persona"
-      ? await Promise.all([todas(api, `repos/${repo}/pulls/${numero}/commits`, 3),
+    const [pr, commits, revisiones] = politica === "otra-persona"
+      ? await Promise.all([api(`repos/${repo}/pulls/${numero}`), todas(api, `repos/${repo}/pulls/${numero}/commits`, 3),
         todas(api, `repos/${repo}/pulls/${numero}/reviews`)])
-      : [[], []];
-    const { ok, mensaje } = decidir({ politica, commits, revisiones });
+      : [undefined, [], []];
+    const { ok, mensaje } = decidir({ politica, pr, commits, revisiones });
     if (ok) console.log(mensaje);
     else console.error(`::error::${mensaje}`);
     process.exit(ok ? 0 : 1);
