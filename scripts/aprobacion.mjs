@@ -43,7 +43,10 @@ export function aprobadores(revisiones, cabeza) {
 /** El veredicto: { ok, mensaje }. */
 export const MAX_COMMITS = 250; // Lo más que devuelve la API de los commits de una PR.
 
-export function decidir({ politica, pr, commits, revisiones }) {
+// El permiso que hace falta para que la aprobación cuente, el mismo que pide GitHub a las revisiones obligatorias.
+const PUEDE_APROBAR = new Set(["admin", "maintain", "write"]);
+
+export function decidir({ politica, pr, commits, revisiones, permisos = {} }) {
   if (politica !== "otra-persona") {
     return { ok: true, mensaje: `La política de aprobación es «${politica ?? "sin fijar"}»: no hay nada que comprobar` };
   }
@@ -59,7 +62,9 @@ export function decidir({ politica, pr, commits, revisiones }) {
     }
     return { ok: true, mensaje: "La PR no tiene commits del harness: no hay nada que comprobar" };
   }
-  const otros = aprobadores(revisiones, pr?.head?.sha).filter((login) => !quienes.has(login));
+  // author_association no basta: un miembro de la organización puede no tener escritura en este repositorio.
+  const otros = aprobadores(revisiones, pr?.head?.sha).filter((login) => !quienes.has(login)
+    && PUEDE_APROBAR.has(permisos[login]));
   if (otros.length) {
     return { ok: true, mensaje: `Aprobada por ${otros.map((l) => `@${l}`).join(", ")}, distinta de quien lanzó el harness`
       + ` (${[...quienes].map((l) => `@${l}`).join(", ")})` };
@@ -101,7 +106,19 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       ? await Promise.all([api(`repos/${repo}/pulls/${numero}`), todas(api, `repos/${repo}/pulls/${numero}/commits`, 3),
         todas(api, `repos/${repo}/pulls/${numero}/reviews`)])
       : [undefined, [], []];
-    const { ok, mensaje } = decidir({ politica, pr, commits, revisiones });
+    // El permiso de cada persona que aprueba y no lanzó el harness: si no se puede leer, no cuenta.
+    const permisos = {};
+    if (politica === "otra-persona") {
+      const quienes = lanzadores(commits);
+      for (const login of aprobadores(revisiones, pr?.head?.sha).filter((l) => !quienes.has(l))) {
+        try {
+          permisos[login] = (await api(`repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`))?.permission;
+        } catch {
+          permisos[login] = undefined;
+        }
+      }
+    }
+    const { ok, mensaje } = decidir({ politica, pr, commits, revisiones, permisos });
     if (ok) console.log(mensaje);
     else console.error(`::error::${mensaje}`);
     process.exit(ok ? 0 : 1);

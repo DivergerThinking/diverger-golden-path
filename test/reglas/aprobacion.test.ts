@@ -38,7 +38,8 @@ async function comprobar(politica: string | undefined, revisiones: Revision[],
     mkdirSync(join(carpeta, ".diverger"));
     writeFileSync(join(carpeta, ".diverger", "settings.json"), JSON.stringify({ approvalPolicy: politica }));
   }
-  const datos: Datos = { ejecuciones: [], usuarios: {}, prs: { 55: {
+  const datos: Datos = { ejecuciones: [], usuarios: {}, permisos: { "luis-gil": "write", "marta-ruiz": "admin",
+    "ana-lopez": "write", "Ana-Lopez": "write", "pepe-lector": "read" }, prs: { 55: {
     body: "", user: HARNESS, head: { sha: CABEZA }, commits: commits.length, listaDeCommits: commits, reviews: revisiones,
     ...extra } } };
   const api = await arrancar(datos);
@@ -112,6 +113,14 @@ describe("política «otra persona» (EN-OPS-10 del harness)", () => {
       expect((await comprobar("otra-persona", [aprueba("luis-gil", "APPROVED", { author_association: asociacion })])).codigo,
         asociacion).toBe(0);
     }
+  });
+
+  it("solo cuenta quien puede escribir en el repositorio, aunque sea miembro de la organización (revisión de seguridad)", async () => {
+    expect((await comprobar("otra-persona", [aprueba("pepe-lector", "APPROVED", { author_association: "MEMBER" })])).codigo)
+      .toBe(1);
+    // Sin permiso conocido (la API responde 404), tampoco.
+    expect((await comprobar("otra-persona", [aprueba("desconocido", "APPROVED", { author_association: "MEMBER" })])).codigo)
+      .toBe(1);
   });
 
   it("con los datos incompletos, falla: más commits de los leídos, o una PR de la App sin quien la lanzó", async () => {

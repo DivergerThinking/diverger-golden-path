@@ -19,6 +19,8 @@ export interface Ejecucion {
 export interface Datos {
   ejecuciones: Ejecucion[];
   usuarios: Record<string, { id: number; name: string | null }>;
+  /** El permiso de cada persona en el repositorio (EN-OPS-10): sin él, la API responde 404. */
+  permisos?: Record<string, string>;
   /** Las PR por número, con su descripción actual (EN-OPS-07) y, para la política «otra persona» (EN-OPS-10), sus
    * commits y sus revisiones. */
   prs?: Record<string, { body: string | null; user?: { login: string; type?: string }; head?: { sha: string };
@@ -62,6 +64,11 @@ function responder(datos: Datos, url: URL): unknown {
   }
   const pr = new RegExp(`^/repos/${REPO}/pulls/([0-9]+)$`).exec(url.pathname);
   if (pr) return datos.prs?.[pr[1] ?? ""];
+  const permiso = new RegExp(`^/repos/${REPO}/collaborators/([^/]+)/permission$`).exec(url.pathname);
+  if (permiso) {
+    const nivel = datos.permisos?.[decodeURIComponent(permiso[1] ?? "")];
+    return nivel ? { permission: nivel } : undefined;
+  }
   // Listas paginadas de 100: la página 2 y siguientes, vacías si caben en una.
   const lista = new RegExp(`^/repos/${REPO}/pulls/([0-9]+)/(commits|reviews)$`).exec(url.pathname);
   if (lista) {
