@@ -1,24 +1,42 @@
 // Mínimo privilegio en GCP (EN-GP-05 y TA-146 del harness, RQ.061): la infraestructura como código de infra/ no
 // concede a nadie roles/iam.serviceAccountUser a nivel de proyecto, porque con él la cuenta de despliegue podría actuar
 // como cualquier cuenta de servicio del proyecto, y no da los roles básicos (Editor, Owner, Viewer). serviceAccountUser
-// se concede solo sobre la cuenta de ejecución, con un recurso google_service_account_iam_*. Las cuentas de despliegue
-// y de ejecución, y quitar Editor a la de Compute Engine, son de infra/entornos/gcp.sh del harness; esto impide que la
-// infraestructura de la aplicación lo deshaga.
-// Uso en el CI: node scripts/iam.mjs [carpeta], por defecto infra/. Falla con un mensaje por cada concesión.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+// solo cabe sobre una cuenta de servicio concreta, en un recurso google_service_account_iam_*. Las cuentas de
+// despliegue y de ejecución, y quitar Editor a la de Compute Engine, son de infra/entornos/gcp.sh del harness; esto
+// impide que la infraestructura de la aplicación lo deshaga.
+//
+// Se lee el texto, no el plan, así que la regla es amplia a propósito (revisión de la PR #62): cualquier aparición de
+// roles/iam.serviceAccountUser o de un rol básico fuera de un google_service_account_iam_* es un error, esté en un
+// recurso, en locals, en una variable, en un for_each o en un heredoc. Las políticas completas
+// (google_*_iam_policy) no se usan: sustituyen la política entera del proyecto. Y la infraestructura va en .tf, no en
+// .tf.json, que esto no revisa. Se quitan los comentarios antes de buscar.
+// Uso en el CI: node scripts/iam.mjs [carpeta], por defecto infra. Falla con un error por cada problema.
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const SERVICE_ACCOUNT_USER =
   "serviceAccountUser debe concederse solo sobre la cuenta de ejecución, no a nivel de proyecto";
 export const ROL_BASICO = "los roles básicos (Editor, Owner, Viewer) no se conceden en la infraestructura del proyecto";
+export const POLITICA = "las políticas completas de IAM (google_*_iam_policy) no se usan: sustituyen la política entera";
+export const TF_JSON = "la infraestructura va en ficheros .tf, no .tf.json, para que se pueda revisar";
 
-// Los recursos que conceden roles en el proyecto, la carpeta o la organización: los de una cuenta de servicio
-// (google_service_account_iam_*) son los que limitan el permiso a esa cuenta.
-const A_NIVEL_DE_PROYECTO = /^google_(project|folder|organization)_iam_(member|binding|policy)$/;
-const BASICOS = new Set(["roles/editor", "roles/owner", "roles/viewer"]);
+const SAU = /roles\/iam\.serviceAccountUser/i;
+const BASICO = /roles\/(editor|owner|viewer)\b/i;
+const PERMITIDO = /^google_service_account_iam_(member|binding)$/;
+const POLITICA_COMPLETA = /^google_(project|folder|organization)_iam_policy$/;
+const HEREDOC = /^<<-?([A-Za-z_][A-Za-z0-9_]*)[ \t]*\n/;
 
-// El texto HCL sin comentarios (de línea con # o //, y de bloque), sin tocar lo que va dentro de las cadenas.
+/** Dónde acaba el heredoc que empieza en i, o -1 si en i no empieza ninguno. */
+function finDelHeredoc(texto, i) {
+  const apertura = HEREDOC.exec(texto.slice(i, i + 80));
+  if (!apertura) return -1;
+  const cuerpo = i + apertura[0].length;
+  const cierre = new RegExp(`(^|\\n)[ \\t]*${apertura[1]}[ \\t]*(?=\\n|$)`).exec(texto.slice(cuerpo));
+  return cierre ? cuerpo + cierre.index + cierre[0].length : texto.length;
+}
+
+/** El texto sin comentarios (de línea con # o //, y de bloque), sin tocar las cadenas ni los heredocs. */
 export function sinComentarios(texto) {
   let salida = "";
   let cadena = false;
@@ -28,6 +46,12 @@ export function sinComentarios(texto) {
       salida += c;
       if (c === "\\") salida += texto[++i] ?? "";
       else if (c === '"') cadena = false;
+      continue;
+    }
+    const heredoc = finDelHeredoc(texto, i);
+    if (heredoc !== -1) {
+      salida += texto.slice(i, heredoc);
+      i = heredoc - 1;
     } else if (c === '"') {
       cadena = true;
       salida += c;
@@ -42,48 +66,60 @@ export function sinComentarios(texto) {
   return salida;
 }
 
-/** Los bloques resource de un texto HCL: tipo, nombre y cuerpo, sin comentarios y contando llaves fuera de las cadenas. */
+/** Dónde acaba el bloque que empieza en «desde» (justo después de su llave), saltando cadenas y heredocs. */
+function finDelBloque(texto, desde) {
+  let nivel = 1;
+  for (let i = desde; i < texto.length; i++) {
+    const c = texto[i];
+    const heredoc = finDelHeredoc(texto, i);
+    if (heredoc !== -1) i = heredoc - 1;
+    else if (c === '"') {
+      for (i++; i < texto.length && texto[i] !== '"'; i++) if (texto[i] === "\\") i++;
+    } else if (c === "{") nivel++;
+    else if (c === "}" && --nivel === 0) return i;
+  }
+  return texto.length;
+}
+
+/** Los bloques resource de un texto HCL ya sin comentarios: tipo, nombre, inicio y fin. Las etiquetas pueden ir sin
+ * comillas, como admiten OpenTofu y Terraform. */
 export function recursos(texto) {
-  const limpio = sinComentarios(texto);
   const encontrados = [];
-  const inicio = /resource\s+"([^"]+)"\s+"([^"]+)"\s*\{/g;
+  const inicio = /\bresource\s+"?([\w-]+)"?\s+"?([\w-]+)"?\s*\{/g;
   let coincidencia;
-  while ((coincidencia = inicio.exec(limpio))) {
-    let nivel = 1;
-    let i = inicio.lastIndex;
-    let cadena = false;
-    for (; i < limpio.length && nivel > 0; i++) {
-      const c = limpio[i];
-      if (cadena) {
-        if (c === "\\") i++;
-        else if (c === '"') cadena = false;
-      } else if (c === '"') cadena = true;
-      else if (c === "{") nivel++;
-      else if (c === "}") nivel--;
-    }
-    encontrados.push({ tipo: coincidencia[1], nombre: coincidencia[2], cuerpo: limpio.slice(inicio.lastIndex, i - 1) });
-    inicio.lastIndex = i;
+  while ((coincidencia = inicio.exec(texto))) {
+    const fin = finDelBloque(texto, inicio.lastIndex);
+    encontrados.push({ tipo: coincidencia[1], nombre: coincidencia[2], inicio: coincidencia.index, fin });
+    inicio.lastIndex = fin;
   }
   return encontrados;
 }
 
-/** Los roles que nombra un recurso: role = "…" y, en una política, los de sus bindings. */
-function roles(cuerpo) {
-  return [...cuerpo.matchAll(/\brole\s*=\s*"([^"]+)"/g)].map((m) => m[1]);
-}
-
-/** Los errores de una infraestructura (el texto de sus .tf), con el recurso que los causa. */
-export function revisar(texto) {
+/** Los problemas del texto de un .tf. */
+export function revisar(original) {
+  const texto = sinComentarios(original);
+  const bloques = recursos(texto);
   const errores = [];
-  for (const { tipo, nombre, cuerpo } of recursos(texto)) {
-    if (!A_NIVEL_DE_PROYECTO.test(tipo)) continue;
-    // Una política entera (google_project_iam_policy) también puede llevar los roles en un data.
-    const nombrados = roles(cuerpo);
-    if (nombrados.some((rol) => rol === "roles/iam.serviceAccountUser")) {
-      errores.push(`${tipo}.${nombre}: ${SERVICE_ACCOUNT_USER}`);
-    }
-    if (nombrados.some((rol) => BASICOS.has(rol))) errores.push(`${tipo}.${nombre}: ${ROL_BASICO}`);
+  for (const { tipo, nombre } of bloques) {
+    if (POLITICA_COMPLETA.test(tipo)) errores.push(`${tipo}.${nombre}: ${POLITICA}`);
   }
+  // Cualquier aparición cuenta, en un recurso o fuera de ellos (locals, una variable, un data, un heredoc): un error por
+  // cada recurso que la tenga y otro si está fuera. Dentro de un google_service_account_iam_*, serviceAccountUser sí
+  // vale; un rol básico, nunca.
+  let fuera = "";
+  let desde = 0;
+  for (const bloque of bloques) {
+    const cuerpo = texto.slice(bloque.inicio, bloque.fin + 1);
+    if (!PERMITIDO.test(bloque.tipo) && SAU.test(cuerpo)) {
+      errores.push(`${bloque.tipo}.${bloque.nombre}: ${SERVICE_ACCOUNT_USER}`);
+    }
+    if (BASICO.test(cuerpo)) errores.push(`${bloque.tipo}.${bloque.nombre}: ${ROL_BASICO}`);
+    fuera += texto.slice(desde, bloque.inicio);
+    desde = bloque.fin + 1;
+  }
+  fuera += texto.slice(desde);
+  if (SAU.test(fuera)) errores.push(`fuera de un recurso: ${SERVICE_ACCOUNT_USER}`);
+  if (BASICO.test(fuera)) errores.push(`fuera de un recurso: ${ROL_BASICO}`);
   return errores;
 }
 
@@ -95,12 +131,17 @@ function ficheros(carpeta) {
   });
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+// Con las rutas reales, también se ejecuta si se lanza a través de un enlace (revisión de la PR #62).
+const lanzado = process.argv[1] ? pathToFileURL(realpathSync(process.argv[1])).href : "";
+if (import.meta.url === lanzado) {
   const carpeta = process.argv[2] ?? "infra";
-  const errores = ficheros(carpeta)
-    .filter((ruta) => ruta.endsWith(".tf"))
-    .flatMap((ruta) => revisar(readFileSync(ruta, "utf8")).map((error) => `${relative(".", ruta)}: ${error}`));
-  for (const error of errores) console.error(`::error::${error}`);
+  const errores = [];
+  for (const ruta of ficheros(carpeta)) {
+    const visible = relative(".", ruta);
+    if (ruta.endsWith(".tf.json")) errores.push([visible, TF_JSON]);
+    else if (ruta.endsWith(".tf")) for (const error of revisar(readFileSync(ruta, "utf8"))) errores.push([visible, error]);
+  }
+  for (const [fichero, error] of errores) console.error(`::error file=${fichero}::${fichero}: ${error}`);
   if (errores.length) process.exit(1);
-  console.log("IAM de infra/: sin serviceAccountUser a nivel de proyecto ni roles básicos");
+  console.log(`IAM de ${carpeta}: sin serviceAccountUser a nivel de proyecto, roles básicos ni políticas completas`);
 }
