@@ -271,6 +271,13 @@ resource "google_project_iam_member" "malo" {
         .toEqual(['module.iam: los módulos solo pueden ser locales, con source = "./…", para que se revisen con lo demás']);
     }
     expect(iam('module "local" {\n  source = "./modulos/red"\n}')).toEqual({ codigo: 0, errores: [] });
+    expect(iam('module "local" {\n  source = "./x" # con un comentario\n}')).toEqual({ codigo: 0, errores: [] });
+    // Un atributo que acaba en source no cuenta como el source, y uno que no es una cadena sola no vale.
+    for (const cuerpo of ['  my-source = "./x"\n  source = ("git::https://x/y.git")',
+      '  source = <<EOT\ngit::https://x/y.git\nEOT', '  source = "./x"\n  source_otro = 1\n  source = "../y"']) {
+      expect(iam(`module "m" {\n${cuerpo}\n}`).errores, cuerpo)
+        .toEqual(['module.m: los módulos solo pueden ser locales, con source = "./…", para que se revisen con lo demás']);
+    }
     // Dos source en el mismo bloque, uno dentro de otro bloque: no se sabe cuál vale.
     expect(iam('module "dos" {\n  x = { source = "./bien" }\n  source = "git::https://x/y.git"\n}').errores)
       .toEqual(['module.dos: los módulos solo pueden ser locales, con source = "./…", para que se revisen con lo demás']);

@@ -147,8 +147,11 @@ export function revisar(original) {
   for (const modulo of texto.matchAll(/\bmodule\s+"?([\w-]+)"?\s*\{/g)) {
     const cuerpo = texto.slice(modulo.index, finDelBloque(texto, modulo.index + modulo[0].length) + 1);
     // Un solo source, literal, local, sin salir de la carpeta ni entrar en una .terraform, que no se revisa.
-    const origenes = [...cuerpo.matchAll(/\bsource\s*=\s*"([^"]*)"/g)].map((m) => m[1]);
-    const origen = origenes.length === 1 ? origenes[0] : "";
+    // El atributo empieza línea (my-source no cuenta), y su valor es una cadena sola: ni paréntesis, ni heredoc, ni nada
+    // detrás. Cualquier otra forma, o más de un source en el bloque, no vale (revisión de seguridad de la PR #64).
+    const origenes = [...cuerpo.matchAll(/(?:^|\n)[ \t]*source[ \t]*=([^\n]*)/g)].map((m) => m[1].trim());
+    const literal = origenes.length === 1 ? /^"([^"\\$%]*)"$/.exec(origenes[0]) : null;
+    const origen = literal?.[1] ?? "";
     const local = /^\.\/[\w./-]*$/.test(origen)
       && !origen.split("/").some((parte) => parte === ".." || parte === ".terraform");
     if (!local) errores.push(`module.${modulo[1]}: ${MODULO}`);
