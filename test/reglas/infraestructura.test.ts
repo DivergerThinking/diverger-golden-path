@@ -253,6 +253,22 @@ resource "google_project_iam_member" "malo" {
   role = "roles/iam.serviceAccountUser"
 }`;
     expect(iam(interpolacion).errores).toEqual([`google_project_iam_member.malo: ${SERVICE_ACCOUNT_USER}`]);
+    // $${ y %%{ son llaves escapadas, no interpolaciones: no se tragan la comilla de cierre.
+    const escapada = `resource "google_service_account_iam_member" "ok" {
+  service_account_id = "$\${"
+  role               = "roles/iam.serviceAccountUser"
+}
+resource "google_project_iam_member" "malo" {
+  role = "roles/iam.serviceAccountUser"
+}`;
+    expect(iam(escapada).errores).toEqual([`google_project_iam_member.malo: ${SERVICE_ACCOUNT_USER}`]);
+  });
+
+  it("si una cadena o un bloque no se cierra, falla en vez de fiarse de lo leído", () => {
+    for (const tf of ['resource "google_project_iam_member" "x" {\n  role = "roles/owner', 'resource "a" "b" {\n',
+      'locals {\n  x = "\${"\n}\n']) {
+      expect(iam(tf)).toEqual({ codigo: 1, errores: ["no se puede leer: una cadena, un heredoc o un bloque no se cierra"] });
+    }
   });
 
   it("el CI lo comprueba en el job infraestructura, desde la raíz", () => {

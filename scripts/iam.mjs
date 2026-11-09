@@ -20,6 +20,7 @@ export const SERVICE_ACCOUNT_USER =
   "serviceAccountUser debe concederse solo sobre la cuenta de ejecución, no a nivel de proyecto";
 export const ROL_BASICO = "los roles básicos (Editor, Owner, Viewer) no se conceden en la infraestructura del proyecto";
 export const POLITICA = "las políticas completas de IAM (google_*_iam_policy) no se usan: sustituyen la política entera";
+export const ILEGIBLE = "no se puede leer: una cadena, un heredoc o un bloque no se cierra";
 export const TF_JSON = "la infraestructura va en ficheros .tf o .tofu, no .tf.json ni .tofu.json, para que se pueda revisar";
 
 const SAU = /roles\/iam\.serviceAccountUser/i;
@@ -40,10 +41,12 @@ function finDeLaCadena(texto, i) {
     const c = texto[j];
     if (c === "\\") j++;
     else if (c === '"') return j;
+    else if ((c === "$" || c === "%") && texto[j + 1] === c && texto[j + 2] === "{") j += 2; // $${ y %%{ son texto.
     else if ((c === "$" || c === "%") && texto[j + 1] === "{") {
       let nivel = 1;
       for (j += 2; j < texto.length && nivel > 0; j++) {
-        if (texto[j] === '"') j = finDeLaCadena(texto, j);
+        if (texto[j] === "\\") j++;
+        else if (texto[j] === '"') j = finDeLaCadena(texto, j);
         else if (texto[j] === "{") nivel++;
         else if (texto[j] === "}") nivel--;
       }
@@ -114,10 +117,29 @@ export function recursos(texto) {
   return encontrados;
 }
 
+/** Si las cadenas, los heredocs y las llaves del texto se cierran todos. */
+function equilibrado(texto) {
+  let nivel = 0;
+  for (let i = 0; i < texto.length; i++) {
+    const heredoc = finDelHeredoc(texto, i);
+    if (heredoc !== -1) {
+      if (heredoc >= texto.length && !/\n[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*$/.test(texto)) return false;
+      i = heredoc - 1;
+    } else if (texto[i] === '"') {
+      i = finDeLaCadena(texto, i);
+      if (i >= texto.length) return false;
+    } else if (texto[i] === "{") nivel++;
+    else if (texto[i] === "}" && --nivel < 0) return false;
+  }
+  return nivel === 0;
+}
+
 /** Los problemas del texto de un .tf. */
 export function revisar(original) {
   const texto = sinComentarios(original);
   const bloques = recursos(texto);
+  // Si el lector no consigue cerrar algo, no se fía de lo que ha leído: falla (revisión de seguridad de la PR #62).
+  if (bloques.some((b) => b.fin >= texto.length) || !equilibrado(texto)) return [ILEGIBLE];
   const errores = [];
   for (const { tipo, nombre, inicio, fin } of bloques) {
     if (POLITICA_COMPLETA.test(tipo)) errores.push(`${tipo}.${nombre}: ${POLITICA}`);
