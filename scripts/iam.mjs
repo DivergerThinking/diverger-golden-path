@@ -146,8 +146,12 @@ export function revisar(original) {
   // Un módulo remoto, o de fuera de la carpeta, trae recursos que esto no lee (revisión de seguridad de la PR #63).
   for (const modulo of texto.matchAll(/\bmodule\s+"?([\w-]+)"?\s*\{/g)) {
     const cuerpo = texto.slice(modulo.index, finDelBloque(texto, modulo.index + modulo[0].length) + 1);
-    const origen = /\bsource\s*=\s*"([^"]*)"/.exec(cuerpo)?.[1] ?? "";
-    if (!/^\.\/(?!.*\.\.)/.test(origen)) errores.push(`module.${modulo[1]}: ${MODULO}`);
+    // Un solo source, literal, local, sin salir de la carpeta ni entrar en una .terraform, que no se revisa.
+    const origenes = [...cuerpo.matchAll(/\bsource\s*=\s*"([^"]*)"/g)].map((m) => m[1]);
+    const origen = origenes.length === 1 ? origenes[0] : "";
+    const local = /^\.\/[\w./-]*$/.test(origen)
+      && !origen.split("/").some((parte) => parte === ".." || parte === ".terraform");
+    if (!local) errores.push(`module.${modulo[1]}: ${MODULO}`);
   }
   for (const { tipo, nombre, inicio, fin } of bloques) {
     if (POLITICA_COMPLETA.test(tipo)) errores.push(`${tipo}.${nombre}: ${POLITICA}`);

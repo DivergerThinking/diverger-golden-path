@@ -265,11 +265,15 @@ resource "google_project_iam_member" "malo" {
   });
 
   it("un módulo remoto o de fuera de la carpeta no vale, y uno local sí (revisión de seguridad)", () => {
-    for (const origen of ["terraform-google-modules/iam/google", "git::https://x/y.git", "../fuera", "./a/../../fuera"]) {
+    for (const origen of ["terraform-google-modules/iam/google", "git::https://x/y.git", "../fuera", "./a/../../fuera",
+      "./.terraform/modules/x", "./a/.terraform/b", "./${var.ruta}", "./a\\\\b"]) {
       expect(iam(`module "iam" {\n  source = "${origen}"\n}`).errores, origen)
         .toEqual(['module.iam: los módulos solo pueden ser locales, con source = "./…", para que se revisen con lo demás']);
     }
     expect(iam('module "local" {\n  source = "./modulos/red"\n}')).toEqual({ codigo: 0, errores: [] });
+    // Dos source en el mismo bloque, uno dentro de otro bloque: no se sabe cuál vale.
+    expect(iam('module "dos" {\n  x = { source = "./bien" }\n  source = "git::https://x/y.git"\n}').errores)
+      .toEqual(['module.dos: los módulos solo pueden ser locales, con source = "./…", para que se revisen con lo demás']);
   });
 
   it("un .tfvars con el rol también falla, y un .terraform que no es la caché se revisa", () => {
