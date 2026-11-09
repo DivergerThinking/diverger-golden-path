@@ -9,7 +9,8 @@
 // roles/iam.serviceAccountUser o de un rol básico fuera de un google_service_account_iam_* es un error, esté en un
 // recurso, en locals, en una variable, en un for_each o en un heredoc. Las políticas completas
 // (google_*_iam_policy) no se usan: sustituyen la política entera del proyecto. Y la infraestructura va en .tf, no en
-// .tf.json, que esto no revisa. Se quitan los comentarios antes de buscar.
+// .tf.json, que esto no revisa; los .tofu de OpenTofu se revisan como los .tf. El rol de un recurso de IAM del proyecto
+// tiene que ser una cadena literal. Se quitan los comentarios antes de buscar.
 // Uso en el CI: node scripts/iam.mjs [carpeta], por defecto infra. Falla con un error por cada problema.
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -19,13 +20,38 @@ export const SERVICE_ACCOUNT_USER =
   "serviceAccountUser debe concederse solo sobre la cuenta de ejecución, no a nivel de proyecto";
 export const ROL_BASICO = "los roles básicos (Editor, Owner, Viewer) no se conceden en la infraestructura del proyecto";
 export const POLITICA = "las políticas completas de IAM (google_*_iam_policy) no se usan: sustituyen la política entera";
-export const TF_JSON = "la infraestructura va en ficheros .tf, no .tf.json, para que se pueda revisar";
+export const TF_JSON = "la infraestructura va en ficheros .tf o .tofu, no .tf.json ni .tofu.json, para que se pueda revisar";
 
 const SAU = /roles\/iam\.serviceAccountUser/i;
 const BASICO = /roles\/(editor|owner|viewer)\b/i;
 const PERMITIDO = /^google_service_account_iam_(member|binding)$/;
 const POLITICA_COMPLETA = /^google_(project|folder|organization)_iam_policy$/;
+const DE_PROYECTO = /^google_(project|folder|organization)_iam_(member|binding)$/;
+// El rol de un recurso de IAM del proyecto, la carpeta o la organización es una cadena literal sin interpolación: uno
+// construido (local.rol, each.value, "roles/${…}") no se puede comprobar leyendo el texto (revisión de seguridad).
+const ROL_LITERAL = /^"roles\/[A-Za-z0-9._]+"$/;
+export const ROL_NO_LITERAL = "el rol tiene que ser una cadena literal, como \"roles/datastore.user\", para poder comprobarlo";
 const HEREDOC = /^<<-?([A-Za-z_][A-Za-z0-9_]*)[ \t]*\n/;
+
+/** Dónde acaba la cadena que empieza en la comilla de i (el índice de su comilla de cierre), con las interpolaciones
+ * ${…} y %{…}, que pueden llevar llaves y otras cadenas dentro (revisión de seguridad de la PR #62). */
+function finDeLaCadena(texto, i) {
+  for (let j = i + 1; j < texto.length; j++) {
+    const c = texto[j];
+    if (c === "\\") j++;
+    else if (c === '"') return j;
+    else if ((c === "$" || c === "%") && texto[j + 1] === "{") {
+      let nivel = 1;
+      for (j += 2; j < texto.length && nivel > 0; j++) {
+        if (texto[j] === '"') j = finDeLaCadena(texto, j);
+        else if (texto[j] === "{") nivel++;
+        else if (texto[j] === "}") nivel--;
+      }
+      j--;
+    }
+  }
+  return texto.length;
+}
 
 /** Dónde acaba el heredoc que empieza en i, o -1 si en i no empieza ninguno. */
 function finDelHeredoc(texto, i) {
@@ -39,22 +65,16 @@ function finDelHeredoc(texto, i) {
 /** El texto sin comentarios (de línea con # o //, y de bloque), sin tocar las cadenas ni los heredocs. */
 export function sinComentarios(texto) {
   let salida = "";
-  let cadena = false;
   for (let i = 0; i < texto.length; i++) {
     const c = texto[i];
-    if (cadena) {
-      salida += c;
-      if (c === "\\") salida += texto[++i] ?? "";
-      else if (c === '"') cadena = false;
-      continue;
-    }
     const heredoc = finDelHeredoc(texto, i);
     if (heredoc !== -1) {
       salida += texto.slice(i, heredoc);
       i = heredoc - 1;
     } else if (c === '"') {
-      cadena = true;
-      salida += c;
+      const fin = finDeLaCadena(texto, i);
+      salida += texto.slice(i, fin + 1);
+      i = fin;
     } else if (c === "#" || (c === "/" && texto[i + 1] === "/")) {
       const fin = texto.indexOf("\n", i);
       i = (fin === -1 ? texto.length : fin) - 1;
@@ -73,9 +93,8 @@ function finDelBloque(texto, desde) {
     const c = texto[i];
     const heredoc = finDelHeredoc(texto, i);
     if (heredoc !== -1) i = heredoc - 1;
-    else if (c === '"') {
-      for (i++; i < texto.length && texto[i] !== '"'; i++) if (texto[i] === "\\") i++;
-    } else if (c === "{") nivel++;
+    else if (c === '"') i = finDeLaCadena(texto, i);
+    else if (c === "{") nivel++;
     else if (c === "}" && --nivel === 0) return i;
   }
   return texto.length;
@@ -100,8 +119,14 @@ export function revisar(original) {
   const texto = sinComentarios(original);
   const bloques = recursos(texto);
   const errores = [];
-  for (const { tipo, nombre } of bloques) {
+  for (const { tipo, nombre, inicio, fin } of bloques) {
     if (POLITICA_COMPLETA.test(tipo)) errores.push(`${tipo}.${nombre}: ${POLITICA}`);
+    if (DE_PROYECTO.test(tipo)) {
+      const valores = [...texto.slice(inicio, fin + 1).matchAll(/(?:^|[\s{])role\s*=\s*([^\n]*)/g)].map((m) => m[1].trim());
+      if (!valores.length || valores.some((valor) => !ROL_LITERAL.test(valor))) {
+        errores.push(`${tipo}.${nombre}: ${ROL_NO_LITERAL}`);
+      }
+    }
   }
   // Cualquier aparición cuenta, en un recurso o fuera de ellos (locals, una variable, un data, un heredoc): un error por
   // cada recurso que la tenga y otro si está fuera. Dentro de un google_service_account_iam_*, serviceAccountUser sí
@@ -138,8 +163,10 @@ if (import.meta.url === lanzado) {
   const errores = [];
   for (const ruta of ficheros(carpeta)) {
     const visible = relative(".", ruta);
-    if (ruta.endsWith(".tf.json")) errores.push([visible, TF_JSON]);
-    else if (ruta.endsWith(".tf")) for (const error of revisar(readFileSync(ruta, "utf8"))) errores.push([visible, error]);
+    if (ruta.endsWith(".tf.json") || ruta.endsWith(".tofu.json")) errores.push([visible, TF_JSON]);
+    else if (ruta.endsWith(".tf") || ruta.endsWith(".tofu")) {
+      for (const error of revisar(readFileSync(ruta, "utf8"))) errores.push([visible, error]);
+    }
   }
   for (const [fichero, error] of errores) console.error(`::error file=${fichero}::${fichero}: ${error}`);
   if (errores.length) process.exit(1);

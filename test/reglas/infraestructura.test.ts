@@ -133,6 +133,8 @@ const SCRIPT_IAM = join(RAIZ, "scripts", "iam.mjs");
 const SERVICE_ACCOUNT_USER = "serviceAccountUser debe concederse solo sobre la cuenta de ejecución, no a nivel de proyecto";
 const ROL_BASICO = "los roles básicos (Editor, Owner, Viewer) no se conceden en la infraestructura del proyecto";
 const POLITICA = "las políticas completas de IAM (google_*_iam_policy) no se usan: sustituyen la política entera";
+const NO_LITERAL = 'el rol tiene que ser una cadena literal, como "roles/datastore.user", para poder comprobarlo';
+const TF_JSON = "la infraestructura va en ficheros .tf o .tofu, no .tf.json ni .tofu.json, para que se pueda revisar";
 
 /** node scripts/iam.mjs sobre una carpeta con este fichero: el código y los errores, uno por línea. */
 function iam(tf: string, nombre = "main.tf"): { codigo: number | null; errores: string[] } {
@@ -140,7 +142,7 @@ function iam(tf: string, nombre = "main.tf"): { codigo: number | null; errores: 
   try {
     writeFileSync(join(carpeta, nombre), tf);
     const r = spawnSync(process.execPath, [SCRIPT_IAM, carpeta], { encoding: "utf8" });
-    const errores = r.stderr.split("\n").filter(Boolean).map((l) => l.replace(/^::error file=[^:]*::.*?\.tf(\.json)?: /, ""));
+    const errores = r.stderr.split("\n").filter(Boolean).map((l) => l.replace(/^::error file=[^:]*::.*?\.(tf|tofu)(\.json)?: /, ""));
     return { codigo: r.status, errores };
   } finally {
     rmSync(carpeta, { recursive: true, force: true });
@@ -197,13 +199,14 @@ resource "google_project_iam_member" "siguiente" {
 resource "google_project_iam_member" "x" {
   role = local.rol
 }`;
-    expect(iam(locals)).toEqual({ codigo: 1, errores: [`fuera de un recurso: ${SERVICE_ACCOUNT_USER}`] });
+    expect(iam(locals)).toEqual({ codigo: 1, errores: [`google_project_iam_member.x: ${NO_LITERAL}`,
+      `fuera de un recurso: ${SERVICE_ACCOUNT_USER}`] });
     const bucle = `resource "google_project_iam_member" "x" {
   for_each = toset(["roles/iam.serviceAccountUser", "roles/editor"])
   role     = each.value
 }`;
-    expect(iam(bucle).errores).toEqual([`google_project_iam_member.x: ${SERVICE_ACCOUNT_USER}`,
-      `google_project_iam_member.x: ${ROL_BASICO}`]);
+    expect(iam(bucle).errores).toEqual([`google_project_iam_member.x: ${NO_LITERAL}`,
+      `google_project_iam_member.x: ${SERVICE_ACCOUNT_USER}`, `google_project_iam_member.x: ${ROL_BASICO}`]);
     const politica = `data "google_iam_policy" "p" {
   binding {
     role    = "roles/iam.serviceAccountUser"
@@ -227,9 +230,29 @@ resource google_project_iam_member todo {
     expect(iam(heredoc).errores).toEqual([`google_project_iam_member.todo: ${ROL_BASICO}`]);
   });
 
-  it("un .tf.json no vale, porque no se revisa", () => {
-    expect(iam("{}", "main.tf.json")).toEqual({
-      codigo: 1, errores: ["la infraestructura va en ficheros .tf, no .tf.json, para que se pueda revisar"] });
+  it("un .tf.json o un .tofu.json no vale, y un .tofu se revisa como un .tf", () => {
+    expect(iam("{}", "main.tf.json")).toEqual({ codigo: 1, errores: [TF_JSON] });
+    expect(iam("{}", "main.tofu.json")).toEqual({ codigo: 1, errores: [TF_JSON] });
+    expect(iam(`resource "google_project_iam_member" "x" {
+  role = "roles/owner"
+}`, "main.tofu").errores).toEqual([`google_project_iam_member.x: ${ROL_BASICO}`]);
+  });
+
+  it("un rol construido no vale, y una interpolación con comillas y llaves no descuadra los bloques (revisión de seguridad)", () => {
+    const construido = `resource "google_project_iam_member" "x" {
+  role = "roles/\${"edit"}or"
+}`;
+    expect(iam(construido).errores).toEqual([`google_project_iam_member.x: ${NO_LITERAL}`]);
+    // La cadena con "}" dentro de la interpolación no cierra el recurso permitido: el de proyecto sigue fuera de él.
+    const interpolacion = `resource "google_service_account_iam_member" "ok" {
+  service_account_id = "\${replace("a}b", "}", "")}"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:x@y.iam.gserviceaccount.com"
+}
+resource "google_project_iam_member" "malo" {
+  role = "roles/iam.serviceAccountUser"
+}`;
+    expect(iam(interpolacion).errores).toEqual([`google_project_iam_member.malo: ${SERVICE_ACCOUNT_USER}`]);
   });
 
   it("el CI lo comprueba en el job infraestructura, desde la raíz", () => {
