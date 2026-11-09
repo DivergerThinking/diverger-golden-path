@@ -314,6 +314,9 @@ resource "google_project_iam_member" "malo" {
     expect(iam('module "m" "n" {\n  source = "git::https://x/y.git"\n}\n').errores).toEqual([ILEGIBLE]);
     // Una etiqueta con un escape, que OpenTofu lee como google_project_iam_member, no se entiende.
     expect(iam('resource "google_project_iam\\u005fmember" "x" {\n  role = "roles/owner"\n}\n').errores).toEqual([ILEGIBLE]);
+    // Una cabecera falsa dentro de una cadena no tapa una real que no se entiende (revisión de seguridad de la PR #64).
+    expect(iam('locals {\n  x = "resource a b {}"\n}\nresource "google_project_iam\\u005fmember" "y" {\n  role = "roles/owner"\n}\n')
+      .errores).toEqual([ILEGIBLE]);
     // Un atributo que se llama resource no es una cabecera.
     expect(iam('resource "google_storage_bucket" "b" {\n  resource = "x"\n}\n')).toEqual({ codigo: 0, errores: [] });
   });

@@ -113,18 +113,21 @@ function finDelBloque(texto, desde) {
 // entiende y el fichero falla (revisión de seguridad de la PR #64).
 const ETIQUETA = String.raw`("[\p{L}\p{N}_-]+"|[\p{L}\p{N}_-]+)`;
 const sinComillas = (etiqueta) => etiqueta.replace(/^"|"$/g, "");
-const MODULO_CABECERA = new RegExp(String.raw`\bmodule(?=[\s"])\s*${ETIQUETA}\s*\{`, "gu");
-// Cualquier cabecera de bloque resource o module, a principio de línea como manda HCL, que no sea un atributo.
-const CABECERA = /(?:^|\n)[ \t]*(?:resource|module)(?![\p{L}\p{N}_-])(?![ \t]*=)/gu;
+// Las cabeceras empiezan línea, como manda HCL: así una que esté a mitad de línea, dentro de una cadena, no cuenta.
+const MODULO_CABECERA = new RegExp(String.raw`^[ \t]*module(?=[\s"])\s*${ETIQUETA}\s*\{`, "gmu");
+// Cualquier cabecera de bloque resource o module que no sea un atributo.
+const CABECERA = /^[ \t]*(?:resource|module)(?![\p{L}\p{N}_-])(?![ \t]*=)/gmu;
+// Dónde empieza la palabra resource o module de una coincidencia.
+const palabra = (m) => m.index + m[0].search(/resource|module/);
 
 export function recursos(texto) {
   const encontrados = [];
   // OpenTofu no exige espacios entre las palabras de la cabecera: resource"a""b"{ también vale (revisión de la PR #64).
-  const inicio = new RegExp(String.raw`\bresource(?=[\s"])\s*${ETIQUETA}\s*${ETIQUETA}\s*\{`, "gu");
+  const inicio = new RegExp(String.raw`^[ \t]*resource(?=[\s"])\s*${ETIQUETA}\s*${ETIQUETA}\s*\{`, "gmu");
   let coincidencia;
   while ((coincidencia = inicio.exec(texto))) {
     const fin = finDelBloque(texto, inicio.lastIndex);
-    encontrados.push({ tipo: sinComillas(coincidencia[1]), nombre: sinComillas(coincidencia[2]), inicio: coincidencia.index,
+    encontrados.push({ tipo: sinComillas(coincidencia[1]), nombre: sinComillas(coincidencia[2]), inicio: palabra(coincidencia),
       fin });
     inicio.lastIndex = fin;
   }
@@ -156,7 +159,10 @@ export function revisar(original) {
   if (bloques.some((b) => b.fin >= texto.length) || !equilibrado(texto)) return [ILEGIBLE];
   // Y si hay una cabecera resource o module que el lector no ha sabido leer, tampoco (revisión de seguridad de la PR #64).
   const modulos = [...texto.matchAll(MODULO_CABECERA)];
-  if ((texto.match(CABECERA) ?? []).length !== bloques.length + modulos.length) return [ILEGIBLE];
+  // Se comparan las posiciones, no cuántas hay: con el número, una de más en un sitio taparía una de menos en otro.
+  const leidas = [...bloques.map((b) => b.inicio), ...modulos.map(palabra)].sort((a, b) => a - b).join();
+  const todas = [...texto.matchAll(CABECERA)].map(palabra).sort((a, b) => a - b).join();
+  if (leidas !== todas) return [ILEGIBLE];
   const errores = [];
   // Un módulo remoto, o de fuera de la carpeta, trae recursos que esto no lee (revisión de seguridad de la PR #63).
   for (const modulo of modulos) {
