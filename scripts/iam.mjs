@@ -108,14 +108,22 @@ function finDelBloque(texto, desde) {
 
 /** Los bloques resource de un texto HCL ya sin comentarios: tipo, nombre, inicio y fin. Las etiquetas pueden ir sin
  * comillas, como admiten OpenTofu y Terraform. */
+// Una etiqueta de bloque: una cadena entre comillas o un identificador, que en HCL admite cualquier letra Unicode.
+const ETIQUETA = String.raw`("[^"\n]*"|[\p{L}\p{N}_-]+)`;
+const sinComillas = (etiqueta) => etiqueta.replace(/^"|"$/g, "");
+const MODULO_CABECERA = new RegExp(String.raw`\bmodule(?=[\s"])\s*${ETIQUETA}\s*\{`, "gu");
+// Cualquier cabecera de bloque resource o module, a principio de línea como manda HCL, que no sea un atributo.
+const CABECERA = /(?:^|\n)[ \t]*(?:resource|module)(?![\p{L}\p{N}_-])(?![ \t]*=)/gu;
+
 export function recursos(texto) {
   const encontrados = [];
   // OpenTofu no exige espacios entre las palabras de la cabecera: resource"a""b"{ también vale (revisión de la PR #64).
-  const inicio = /\bresource(?=[\s"])\s*"?([\w-]+)"?\s*"?([\w-]+)"?\s*\{/g;
+  const inicio = new RegExp(String.raw`\bresource(?=[\s"])\s*${ETIQUETA}\s*${ETIQUETA}\s*\{`, "gu");
   let coincidencia;
   while ((coincidencia = inicio.exec(texto))) {
     const fin = finDelBloque(texto, inicio.lastIndex);
-    encontrados.push({ tipo: coincidencia[1], nombre: coincidencia[2], inicio: coincidencia.index, fin });
+    encontrados.push({ tipo: sinComillas(coincidencia[1]), nombre: sinComillas(coincidencia[2]), inicio: coincidencia.index,
+      fin });
     inicio.lastIndex = fin;
   }
   return encontrados;
@@ -144,9 +152,12 @@ export function revisar(original) {
   const bloques = recursos(texto);
   // Si el lector no consigue cerrar algo, no se fía de lo que ha leído: falla (revisión de seguridad de la PR #62).
   if (bloques.some((b) => b.fin >= texto.length) || !equilibrado(texto)) return [ILEGIBLE];
+  // Y si hay una cabecera resource o module que el lector no ha sabido leer, tampoco (revisión de seguridad de la PR #64).
+  const modulos = [...texto.matchAll(MODULO_CABECERA)];
+  if ((texto.match(CABECERA) ?? []).length !== bloques.length + modulos.length) return [ILEGIBLE];
   const errores = [];
   // Un módulo remoto, o de fuera de la carpeta, trae recursos que esto no lee (revisión de seguridad de la PR #63).
-  for (const modulo of texto.matchAll(/\bmodule(?=[\s"])\s*"?([\w-]+)"?\s*\{/g)) {
+  for (const modulo of modulos) {
     const cuerpo = texto.slice(modulo.index, finDelBloque(texto, modulo.index + modulo[0].length) + 1);
     // Un solo source, literal, local, sin salir de la carpeta ni entrar en una .terraform, que no se revisa.
     // El atributo empieza línea (my-source no cuenta), y su valor es una cadena sola: ni paréntesis, ni heredoc, ni nada
@@ -156,7 +167,7 @@ export function revisar(original) {
     const origen = literal?.[1] ?? "";
     const local = /^\.\/[\w./-]*$/.test(origen)
       && !origen.split("/").some((parte) => parte === ".." || parte === ".terraform");
-    if (!local) errores.push(`module.${modulo[1]}: ${MODULO}`);
+    if (!local) errores.push(`module.${sinComillas(modulo[1])}: ${MODULO}`);
   }
   for (const { tipo, nombre, inicio, fin } of bloques) {
     if (POLITICA_COMPLETA.test(tipo)) errores.push(`${tipo}.${nombre}: ${POLITICA}`);

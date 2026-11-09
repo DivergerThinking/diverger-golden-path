@@ -131,6 +131,7 @@ describe("infraestructura como código", () => {
 
 const SCRIPT_IAM = join(RAIZ, "scripts", "iam.mjs");
 const SERVICE_ACCOUNT_USER = "serviceAccountUser debe concederse solo sobre la cuenta de ejecución, no a nivel de proyecto";
+const ILEGIBLE = "no se puede leer: una cadena, un heredoc o un bloque no se cierra";
 const ROL_BASICO = "los roles básicos (Editor, Owner, Viewer) no se conceden en la infraestructura del proyecto";
 const POLITICA = "las políticas completas de IAM (google_*_iam_policy) no se usan: sustituyen la política entera";
 const NO_LITERAL = 'el rol tiene que ser una cadena literal, como "roles/datastore.user", para poder comprobarlo';
@@ -304,6 +305,15 @@ resource "google_project_iam_member" "malo" {
   it("un recurso escrito sin espacios en la cabecera también se revisa (revisión de la PR #64)", () => {
     const r = iam('locals { a = "roles/iam.serviceAccount" }\nresource"google_project_iam_member""x"{\n  role = "${local.a}User"\n}\n');
     expect(r.codigo).toBe(1);
+  });
+
+  it("una etiqueta con letras fuera de ASCII se lee, y una cabecera que no se sabe leer hace que falle (revisión de la PR #64)", () => {
+    expect(iam('resource "google_project_iam_member" "año" {\n  role = "roles/owner"\n}\n').codigo).toBe(1);
+    expect(iam('resource google_project_iam_member año {\n  role = "roles/owner"\n}\n').codigo).toBe(1);
+    expect(iam('resource "google_project_iam_member" "x" "y" {\n  role = "roles/owner"\n}\n').errores).toEqual([ILEGIBLE]);
+    expect(iam('module "m" "n" {\n  source = "git::https://x/y.git"\n}\n').errores).toEqual([ILEGIBLE]);
+    // Un atributo que se llama resource no es una cabecera.
+    expect(iam('resource "google_storage_bucket" "b" {\n  resource = "x"\n}\n')).toEqual({ codigo: 0, errores: [] });
   });
 
   it("si una cadena o un bloque no se cierra, falla en vez de fiarse de lo leído", () => {
