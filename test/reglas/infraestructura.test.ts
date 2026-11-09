@@ -272,6 +272,10 @@ resource "google_project_iam_member" "malo" {
     }
     expect(iam('module "local" {\n  source = "./modulos/red"\n}')).toEqual({ codigo: 0, errores: [] });
     expect(iam('module "local" {\n  source = "./x" # con un comentario\n}')).toEqual({ codigo: 0, errores: [] });
+    expect(iam('module "local" { source = "./x" }')).toEqual({ codigo: 0, errores: [] });
+    // Sin espacio tras module, OpenTofu lo acepta igual (revisión de la PR #64).
+    expect(iam('module"iam"{\n  source = "git::https://x/y.git"\n}').errores)
+      .toEqual(['module.iam: los módulos solo pueden ser locales, con source = "./…", para que se revisen con lo demás']);
     // Un atributo que acaba en source no cuenta como el source, y uno que no es una cadena sola no vale.
     for (const cuerpo of ['  my-source = "./x"\n  source = ("git::https://x/y.git")',
       '  source = <<EOT\ngit::https://x/y.git\nEOT', '  source = "./x"\n  source_otro = 1\n  source = "../y"']) {
@@ -295,6 +299,11 @@ resource "google_project_iam_member" "malo" {
     } finally {
       rmSync(carpeta, { recursive: true, force: true });
     }
+  });
+
+  it("un recurso escrito sin espacios en la cabecera también se revisa (revisión de la PR #64)", () => {
+    const r = iam('locals { a = "roles/iam.serviceAccount" }\nresource"google_project_iam_member""x"{\n  role = "${local.a}User"\n}\n');
+    expect(r.codigo).toBe(1);
   });
 
   it("si una cadena o un bloque no se cierra, falla en vez de fiarse de lo leído", () => {

@@ -10,7 +10,8 @@
 // recurso, en locals, en una variable, en un for_each o en un heredoc. Las políticas completas
 // (google_*_iam_policy) no se usan: sustituyen la política entera del proyecto. Y la infraestructura va en .tf, no en
 // .tf.json, que esto no revisa; los .tofu de OpenTofu se revisan como los .tf, y los .tfvars se buscan enteros. Los
-// módulos solo pueden ser locales. El rol de un recurso de IAM del proyecto
+// módulos solo pueden ser locales, sin «..», aunque la ruta siguiera dentro de la carpeta, y un .tfvars no puede nombrar
+// serviceAccountUser ni para un recurso de una cuenta de servicio: se pone en el .tf. El rol de un recurso de IAM del proyecto
 // tiene que ser una cadena literal. Se quitan los comentarios antes de buscar.
 // Uso en el CI: node scripts/iam.mjs [carpeta], por defecto infra. Falla con un error por cada problema.
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -109,7 +110,8 @@ function finDelBloque(texto, desde) {
  * comillas, como admiten OpenTofu y Terraform. */
 export function recursos(texto) {
   const encontrados = [];
-  const inicio = /\bresource\s+"?([\w-]+)"?\s+"?([\w-]+)"?\s*\{/g;
+  // OpenTofu no exige espacios entre las palabras de la cabecera: resource"a""b"{ también vale (revisión de la PR #64).
+  const inicio = /\bresource(?=[\s"])\s*"?([\w-]+)"?\s*"?([\w-]+)"?\s*\{/g;
   let coincidencia;
   while ((coincidencia = inicio.exec(texto))) {
     const fin = finDelBloque(texto, inicio.lastIndex);
@@ -144,12 +146,12 @@ export function revisar(original) {
   if (bloques.some((b) => b.fin >= texto.length) || !equilibrado(texto)) return [ILEGIBLE];
   const errores = [];
   // Un módulo remoto, o de fuera de la carpeta, trae recursos que esto no lee (revisión de seguridad de la PR #63).
-  for (const modulo of texto.matchAll(/\bmodule\s+"?([\w-]+)"?\s*\{/g)) {
+  for (const modulo of texto.matchAll(/\bmodule(?=[\s"])\s*"?([\w-]+)"?\s*\{/g)) {
     const cuerpo = texto.slice(modulo.index, finDelBloque(texto, modulo.index + modulo[0].length) + 1);
     // Un solo source, literal, local, sin salir de la carpeta ni entrar en una .terraform, que no se revisa.
     // El atributo empieza línea (my-source no cuenta), y su valor es una cadena sola: ni paréntesis, ni heredoc, ni nada
     // detrás. Cualquier otra forma, o más de un source en el bloque, no vale (revisión de seguridad de la PR #64).
-    const origenes = [...cuerpo.matchAll(/(?:^|\n)[ \t]*source[ \t]*=([^\n]*)/g)].map((m) => m[1].trim());
+    const origenes = [...cuerpo.matchAll(/(?:^|\n|\{)[ \t]*source[ \t]*=([^\n}]*)/g)].map((m) => m[1].trim());
     const literal = origenes.length === 1 ? /^"([^"\\$%]*)"$/.exec(origenes[0]) : null;
     const origen = literal?.[1] ?? "";
     const local = /^\.\/[\w./-]*$/.test(origen)

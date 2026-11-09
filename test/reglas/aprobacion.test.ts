@@ -169,9 +169,11 @@ describe("política «otra persona» (EN-OPS-10 del harness)", () => {
   });
 
   it("solo cuentan los commits de la misma App que abre la PR, no los de otra App", async () => {
+    // Los commits de la App de la PR no dicen quién la lanzó, y otra App añade uno que dice luis-gil. Antes valía ese, y
+    // ana-lopez podía aprobar; ahora no cuenta, no se sabe quién la lanzó, y falla (revisión de la PR #64).
+    const sinTrailer: Commit = { commit: { message: "feat: x" }, author: APP, committer: { login: "web-flow", type: "Bot" } };
     const deOtraApp: Commit = { ...commitDelHarness("luis-gil"), author: { login: "otra-app[bot]", type: "Bot" } };
-    // El de otra App dice que la lanzó luis-gil: no cuenta, así que la lanzó ana-lopez, y ana-lopez no puede aprobar.
-    expect((await otraPersona([aprueba("ana-lopez")], [commitDelHarness("ana-lopez"), deOtraApp])).codigo).toBe(1);
+    expect((await otraPersona([aprueba("ana-lopez")], [sinTrailer, deOtraApp])).codigo).toBe(1);
   });
 
   it("si la API falla, falla", async () => {
