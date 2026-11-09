@@ -2,7 +2,7 @@
 // ni GCP. El plan con el proveedor simulado lo prueban tofu test y terraform test en el job
 // infraestructura del CI.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -142,7 +142,7 @@ function iam(tf: string, nombre = "main.tf"): { codigo: number | null; errores: 
   try {
     writeFileSync(join(carpeta, nombre), tf);
     const r = spawnSync(process.execPath, [SCRIPT_IAM, carpeta], { encoding: "utf8" });
-    const errores = r.stderr.split("\n").filter(Boolean).map((l) => l.replace(/^::error file=[^:]*::.*?\.(tf|tofu)(\.json)?: /, ""));
+    const errores = r.stderr.split("\n").filter(Boolean).map((l) => l.replace(/^::error file=[^:]*::.*?\.(tf|tofu|tfvars)(\.json)?: /, ""));
     return { codigo: r.status, errores };
   } finally {
     rmSync(carpeta, { recursive: true, force: true });
@@ -262,6 +262,28 @@ resource "google_project_iam_member" "malo" {
   role = "roles/iam.serviceAccountUser"
 }`;
     expect(iam(escapada).errores).toEqual([`google_project_iam_member.malo: ${SERVICE_ACCOUNT_USER}`]);
+  });
+
+  it("un módulo remoto o de fuera de la carpeta no vale, y uno local sí (revisión de seguridad)", () => {
+    for (const origen of ["terraform-google-modules/iam/google", "git::https://x/y.git", "../fuera", "./a/../../fuera"]) {
+      expect(iam(`module "iam" {\n  source = "${origen}"\n}`).errores, origen)
+        .toEqual(['module.iam: los módulos solo pueden ser locales, con source = "./…", para que se revisen con lo demás']);
+    }
+    expect(iam('module "local" {\n  source = "./modulos/red"\n}')).toEqual({ codigo: 0, errores: [] });
+  });
+
+  it("un .tfvars con el rol también falla, y un .terraform que no es la caché se revisa", () => {
+    expect(iam('rol = "roles/iam.serviceAccountUser"\n', "staging.tfvars").errores)
+      .toEqual([`fuera de un recurso: ${SERVICE_ACCOUNT_USER}`]);
+    const carpeta = mkdtempSync(join(tmpdir(), "iam-"));
+    try {
+      mkdirSync(join(carpeta, "sub", ".terraform"), { recursive: true });
+      writeFileSync(join(carpeta, "sub", ".terraform", "x.tf"), 'resource "google_project_iam_member" "x" {\n  role = "roles/owner"\n}\n');
+      const r = spawnSync(process.execPath, [SCRIPT_IAM, carpeta], { encoding: "utf8" });
+      expect(r.status).toBe(1);
+    } finally {
+      rmSync(carpeta, { recursive: true, force: true });
+    }
   });
 
   it("si una cadena o un bloque no se cierra, falla en vez de fiarse de lo leído", () => {

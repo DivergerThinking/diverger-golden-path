@@ -18,8 +18,9 @@ type Usuario = { login: string; type?: string };
 type Revision = { user: Usuario; state: string; commit_id?: string; author_association?: string };
 type Commit = { commit: { message: string }; author?: Usuario | null; committer?: Usuario | null };
 
-const REGLAS_OTRA_PERSONA = [{ type: "pull_request", parameters: {} }, { type: "required_status_checks",
-  parameters: { required_status_checks: [{ context: "calidad" }, { context: "otra-persona" }] } }];
+const REGLAS_OTRA_PERSONA = [{ type: "pull_request", parameters: { require_last_push_approval: true } },
+  { type: "required_status_checks", parameters: { required_status_checks: [{ context: "calidad", integration_id: 15368 },
+    { context: "otra-persona", integration_id: 15368 }] } }];
 const REGLAS_SIN_ELLA = [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "calidad" }] } }];
 
 /** Un commit del harness: lo hace la App y dice quién lo lanzó. */
@@ -154,6 +155,23 @@ describe("política «otra persona» (EN-OPS-10 del harness)", () => {
       author: { login: "luis-gil" } }], { user: { login: "luis-gil" } });
     expect(sinHarness.codigo).toBe(0);
     expect(sinHarness.salida).toContain("La PR no tiene commits del harness");
+  });
+
+  it("si el ruleset no fija el check a GitHub Actions o no pide aprobar el último push, falla (revisión de seguridad)", async () => {
+    const sinFijar = [{ type: "pull_request", parameters: { require_last_push_approval: true } },
+      { type: "required_status_checks", parameters: { required_status_checks: [{ context: "otra-persona" }] } }];
+    const sinUltimoPush = [{ type: "pull_request", parameters: {} }, REGLAS_OTRA_PERSONA[1]];
+    for (const reglas of [sinFijar, sinUltimoPush]) {
+      const r = await comprobar(reglas, [aprueba("luis-gil")]);
+      expect(r.codigo).toBe(1);
+      expect(r.salida).toContain("vuelve a aplicar la política con aplicar-politica.sh del harness");
+    }
+  });
+
+  it("solo cuentan los commits de la misma App que abre la PR, no los de otra App", async () => {
+    const deOtraApp: Commit = { ...commitDelHarness("luis-gil"), author: { login: "otra-app[bot]", type: "Bot" } };
+    // El de otra App dice que la lanzó luis-gil: no cuenta, así que la lanzó ana-lopez, y ana-lopez no puede aprobar.
+    expect((await otraPersona([aprueba("ana-lopez")], [commitDelHarness("ana-lopez"), deOtraApp])).codigo).toBe(1);
   });
 
   it("si la API falla, falla", async () => {

@@ -9,7 +9,8 @@
 // roles/iam.serviceAccountUser o de un rol básico fuera de un google_service_account_iam_* es un error, esté en un
 // recurso, en locals, en una variable, en un for_each o en un heredoc. Las políticas completas
 // (google_*_iam_policy) no se usan: sustituyen la política entera del proyecto. Y la infraestructura va en .tf, no en
-// .tf.json, que esto no revisa; los .tofu de OpenTofu se revisan como los .tf. El rol de un recurso de IAM del proyecto
+// .tf.json, que esto no revisa; los .tofu de OpenTofu se revisan como los .tf, y los .tfvars se buscan enteros. Los
+// módulos solo pueden ser locales. El rol de un recurso de IAM del proyecto
 // tiene que ser una cadena literal. Se quitan los comentarios antes de buscar.
 // Uso en el CI: node scripts/iam.mjs [carpeta], por defecto infra. Falla con un error por cada problema.
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -20,6 +21,7 @@ export const SERVICE_ACCOUNT_USER =
   "serviceAccountUser debe concederse solo sobre la cuenta de ejecución, no a nivel de proyecto";
 export const ROL_BASICO = "los roles básicos (Editor, Owner, Viewer) no se conceden en la infraestructura del proyecto";
 export const POLITICA = "las políticas completas de IAM (google_*_iam_policy) no se usan: sustituyen la política entera";
+export const MODULO = "los módulos solo pueden ser locales, con source = \"./…\", para que se revisen con lo demás";
 export const ILEGIBLE = "no se puede leer: una cadena, un heredoc o un bloque no se cierra";
 export const TF_JSON = "la infraestructura va en ficheros .tf o .tofu, no .tf.json ni .tofu.json, para que se pueda revisar";
 
@@ -141,6 +143,12 @@ export function revisar(original) {
   // Si el lector no consigue cerrar algo, no se fía de lo que ha leído: falla (revisión de seguridad de la PR #62).
   if (bloques.some((b) => b.fin >= texto.length) || !equilibrado(texto)) return [ILEGIBLE];
   const errores = [];
+  // Un módulo remoto, o de fuera de la carpeta, trae recursos que esto no lee (revisión de seguridad de la PR #63).
+  for (const modulo of texto.matchAll(/\bmodule\s+"?([\w-]+)"?\s*\{/g)) {
+    const cuerpo = texto.slice(modulo.index, finDelBloque(texto, modulo.index + modulo[0].length) + 1);
+    const origen = /\bsource\s*=\s*"([^"]*)"/.exec(cuerpo)?.[1] ?? "";
+    if (!/^\.\/(?!.*\.\.)/.test(origen)) errores.push(`module.${modulo[1]}: ${MODULO}`);
+  }
   for (const { tipo, nombre, inicio, fin } of bloques) {
     if (POLITICA_COMPLETA.test(tipo)) errores.push(`${tipo}.${nombre}: ${POLITICA}`);
     if (DE_PROYECTO.test(tipo)) {
@@ -170,11 +178,13 @@ export function revisar(original) {
   return errores;
 }
 
-function ficheros(carpeta) {
+// Solo se salta la caché de OpenTofu de la carpeta revisada: una carpeta .terraform más abajo podría esconder .tf
+// (revisión de seguridad de la PR #63).
+function ficheros(carpeta, raiz = carpeta) {
   return readdirSync(carpeta).flatMap((nombre) => {
     const ruta = join(carpeta, nombre);
-    if (nombre === ".terraform") return [];
-    return statSync(ruta).isDirectory() ? ficheros(ruta) : [ruta];
+    if (nombre === ".terraform" && carpeta === raiz) return [];
+    return statSync(ruta).isDirectory() ? ficheros(ruta, raiz) : [ruta];
   });
 }
 
@@ -185,9 +195,15 @@ if (import.meta.url === lanzado) {
   const errores = [];
   for (const ruta of ficheros(carpeta)) {
     const visible = relative(".", ruta);
-    if (ruta.endsWith(".tf.json") || ruta.endsWith(".tofu.json")) errores.push([visible, TF_JSON]);
-    else if (ruta.endsWith(".tf") || ruta.endsWith(".tofu")) {
+    if (ruta.endsWith(".tf.json") || ruta.endsWith(".tofu.json") || ruta.endsWith(".tfvars.json")) {
+      errores.push([visible, TF_JSON]);
+    } else if (ruta.endsWith(".tf") || ruta.endsWith(".tofu")) {
       for (const error of revisar(readFileSync(ruta, "utf8"))) errores.push([visible, error]);
+    } else if (ruta.endsWith(".tfvars")) {
+      // Una variable puede llevar el rol: aquí no hay recursos, así que cualquier aparición cuenta.
+      const texto = sinComentarios(readFileSync(ruta, "utf8"));
+      if (SAU.test(texto)) errores.push([visible, `fuera de un recurso: ${SERVICE_ACCOUNT_USER}`]);
+      if (BASICO.test(texto)) errores.push([visible, `fuera de un recurso: ${ROL_BASICO}`]);
     }
   }
   for (const [fichero, error] of errores) console.error(`::error file=${fichero}::${fichero}: ${error}`);
