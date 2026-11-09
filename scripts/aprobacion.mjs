@@ -81,6 +81,12 @@ export function decidir({ reglas, pr, commits, revisiones, permisos = {} }) {
   if ((pr?.commits ?? 0) > commits.length || commits.length >= MAX_COMMITS) {
     return { ok: false, mensaje: `No se pueden leer todos los commits de la PR (${pr?.commits ?? commits.length}): ${MENSAJE}` };
   }
+  // El autor de un commit lo deduce GitHub del correo, que cualquiera puede poner: un commit sin autor reconocido en una
+  // PR de la App no se sabe de quién es, y falla. Contra un commit con el correo de la App, el ruleset de esta política
+  // pide además que otra persona apruebe el último push, que GitHub sí sabe quién lo hizo (revisión de seguridad).
+  if (deApp(pr?.user) && commits.some((commit) => !commit?.author?.login)) {
+    return { ok: false, mensaje: `Un commit de la PR no tiene autor reconocido en GitHub: ${MENSAJE}` };
+  }
   const quienes = lanzadores(commits, pr);
   if (quienes.size === 0) {
     // La abre una GitHub App, como la identidad del harness, y no dice quién la lanzó: no se sabe a quién excluir.

@@ -95,6 +95,13 @@ describe("política «otra persona» (EN-OPS-10 del harness)", () => {
     expect((await otraPersona([aprueba("ana-lopez")], [falso])).codigo).toBe(1);
   });
 
+  it("en una PR de la App, un commit sin autor reconocido hace que falle (revisión de seguridad)", async () => {
+    const anonimo: Commit = { commit: { message: "fix: algo" }, author: null, committer: null };
+    const r = await otraPersona([aprueba("luis-gil")], [commitDelHarness("ana-lopez"), anonimo]);
+    expect(r.codigo).toBe(1);
+    expect(r.salida).toContain("Un commit de la PR no tiene autor reconocido en GitHub");
+  });
+
   it("quien hizo un commit de la PR tampoco la puede aprobar", async () => {
     const deLuis: Commit = { commit: { message: "fix: un arreglo" }, author: { login: "luis-gil" }, committer: null };
     expect((await otraPersona([aprueba("luis-gil")], [commitDelHarness("ana-lopez"), deLuis])).codigo).toBe(1);
