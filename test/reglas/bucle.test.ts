@@ -32,7 +32,7 @@ const WF = parse(TEXTO) as {
   on: { workflow_dispatch: { inputs: Record<string, { required: boolean; type: string; default?: unknown }> } };
   permissions: Record<string, string>;
   concurrency: { group: string; "cancel-in-progress": boolean };
-  jobs: Record<string, { permissions?: Record<string, string>; "timeout-minutes"?: number; env: Record<string, string>; steps: Paso[] }>;
+  jobs: Record<string, { permissions?: Record<string, string>; env: Record<string, string>; steps: Paso[] }>;
 };
 const JOB = WF.jobs.bucle ?? { env: {}, steps: [] };
 const PASOS = JOB.steps;
@@ -125,14 +125,17 @@ describe("workflow del bucle desatendido", () => {
 
   it("lanza los workers con el GITHUB_TOKEN del job, que dura lo que el job, y no con un token de la App (harness#753)", () => {
     // El token de instalación de una GitHub App caduca a la hora, y el bucle dura hasta 350 minutos: la sexta ejecución
-    // del nivel 1 se paró con «HTTP 401: Bad credentials» a los 61 minutos.
-    expect(JOB["timeout-minutes"]).toBeGreaterThan(60);
+    // del nivel 1 se paró con «HTTP 401: Bad credentials» a los 61 minutos. Ningún paso del bucle puede usar un token de
+    // la App, salvo el que descarga el núcleo al principio.
     const tokensDeLaApp = PASOS.filter((p) => p.uses?.startsWith("actions/create-github-app-token@"));
     expect(tokensDeLaApp.map((p) => p.id)).toEqual(["token-nucleo"]);
     expect(paso("Recuperar el estado anterior").env).toEqual({ GH_TOKEN: "${{ github.token }}" });
     expect(paso("Bucle").env).toEqual({ GH_TOKEN: "${{ github.token }}",
       GCP_ARRANQUE: "${{ steps.gcp-arranque.outcome }}", LANZADO_POR: "${{ github.actor }}" });
-    expect(TEXTO).not.toContain("steps.token-bucle");
+    for (const p of PASOS) {
+      if (p.id === "token-nucleo" || p.with?.repository === "${{ github.repository_owner }}/Diverger-ExP-Harness") continue;
+      expect(JSON.stringify(p), p.name ?? p.id ?? p.uses).not.toMatch(/steps\.token-[a-z-]+\.outputs\.token/);
+    }
     // La issue se asigna a quien lanzó el bucle, solo si es una persona: un «…[bot]» no pasa la expresión.
     expect(paso("Bucle").run).toContain('[[ "$LANZADO_POR" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] && opciones+=(--notify "$LANZADO_POR")');
   });
