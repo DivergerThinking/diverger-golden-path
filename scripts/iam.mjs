@@ -23,7 +23,7 @@ export const SERVICE_ACCOUNT_USER =
 export const ROL_BASICO = "los roles básicos (Editor, Owner, Viewer) no se conceden en la infraestructura del proyecto";
 export const POLITICA = "las políticas completas de IAM (google_*_iam_policy) no se usan: sustituyen la política entera";
 export const MODULO = "los módulos solo pueden ser locales, con source = \"./…\", para que se revisen con lo demás";
-export const ILEGIBLE = "no se puede leer: una cadena, un heredoc o un bloque no se cierra";
+export const ILEGIBLE = "no se puede leer: una cadena, un heredoc o un bloque no se cierra, o una cabecera resource o module no se entiende";
 export const TF_JSON = "la infraestructura va en ficheros .tf o .tofu, no .tf.json ni .tofu.json, para que se pueda revisar";
 
 const SAU = /roles\/iam\.serviceAccountUser/i;
