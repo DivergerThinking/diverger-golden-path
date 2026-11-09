@@ -312,6 +312,8 @@ resource "google_project_iam_member" "malo" {
     expect(iam('resource google_project_iam_member año {\n  role = "roles/owner"\n}\n').codigo).toBe(1);
     expect(iam('resource "google_project_iam_member" "x" "y" {\n  role = "roles/owner"\n}\n').errores).toEqual([ILEGIBLE]);
     expect(iam('module "m" "n" {\n  source = "git::https://x/y.git"\n}\n').errores).toEqual([ILEGIBLE]);
+    // Una etiqueta con un escape, que OpenTofu lee como google_project_iam_member, no se entiende.
+    expect(iam('resource "google_project_iam\\u005fmember" "x" {\n  role = "roles/owner"\n}\n').errores).toEqual([ILEGIBLE]);
     // Un atributo que se llama resource no es una cabecera.
     expect(iam('resource "google_storage_bucket" "b" {\n  resource = "x"\n}\n')).toEqual({ codigo: 0, errores: [] });
   });

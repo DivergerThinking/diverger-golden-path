@@ -108,8 +108,10 @@ function finDelBloque(texto, desde) {
 
 /** Los bloques resource de un texto HCL ya sin comentarios: tipo, nombre, inicio y fin. Las etiquetas pueden ir sin
  * comillas, como admiten OpenTofu y Terraform. */
-// Una etiqueta de bloque: una cadena entre comillas o un identificador, que en HCL admite cualquier letra Unicode.
-const ETIQUETA = String.raw`("[^"\n]*"|[\p{L}\p{N}_-]+)`;
+// Una etiqueta de bloque: un identificador, que en HCL admite cualquier letra Unicode, con comillas o sin ellas. Una
+// entre comillas con otra cosa, como un escape \u005f que OpenTofu convierte en _, no se reconoce: la cabecera no se
+// entiende y el fichero falla (revisión de seguridad de la PR #64).
+const ETIQUETA = String.raw`("[\p{L}\p{N}_-]+"|[\p{L}\p{N}_-]+)`;
 const sinComillas = (etiqueta) => etiqueta.replace(/^"|"$/g, "");
 const MODULO_CABECERA = new RegExp(String.raw`\bmodule(?=[\s"])\s*${ETIQUETA}\s*\{`, "gu");
 // Cualquier cabecera de bloque resource o module, a principio de línea como manda HCL, que no sea un atributo.
@@ -226,7 +228,10 @@ if (import.meta.url === lanzado) {
       if (BASICO.test(texto)) errores.push([visible, `fuera de un recurso: ${ROL_BASICO}`]);
     }
   }
-  for (const [fichero, error] of errores) console.error(`::error file=${fichero}::${fichero}: ${error}`);
+  // Lo que va en un comando de GitHub Actions se escapa, para que un nombre de fichero no cambie el comando.
+  const escapar = (texto) => texto.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  const propiedad = (texto) => escapar(texto).replace(/:/g, "%3A").replace(/,/g, "%2C");
+  for (const [fichero, error] of errores) console.error(`::error file=${propiedad(fichero)}::${escapar(`${fichero}: ${error}`)}`);
   if (errores.length) process.exit(1);
   console.log(`IAM de ${carpeta}: sin serviceAccountUser a nivel de proyecto, roles básicos ni políticas completas`);
 }
