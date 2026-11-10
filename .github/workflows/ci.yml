@@ -1,6 +1,7 @@
 name: ci
 
-# CI de cada PR: trailers de autoría, la suite de aceptación, los ficheros de tareas, lint, contratos,
+# CI de cada PR: trailers de autoría, la suite de aceptación, los ficheros de tareas, la revisión del revisor de código,
+# lint, contratos,
 # dependencias entre contextos, tipos, tests (también en el contenedor de las comprobaciones del worker), dependencias con
 # vulnerabilidades conocidas (SCA), la infraestructura como código y la imagen del contenedor con
 # su análisis. El análisis del código (SAST) está en codeql.yml y el de secretos en secretos.yml.
@@ -156,6 +157,32 @@ jobs:
           RANGO: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
           PR_RAMA: ${{ github.head_ref }}
         run: node scripts/tareas.mjs "$RANGO"
+
+  # La PR de una tarea lleva en su último commit la aprobación del revisor de código, que publica el worker (EN-OPS-08,
+  # ADR 0008 del harness). Con la política automática, el ruleset lo exige: nadie aprueba las PR.
+  revisor:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: read
+    steps:
+      # La comprobación es la de la rama base: una PR no puede cambiar el script que la juzga.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+      - name: Commits de la PR
+        env:
+          NUMERO: ${{ github.event.pull_request.number }}
+        run: git fetch --quiet origin "refs/pull/$NUMERO/head"
+      - name: Revisión del revisor de código
+        env:
+          RANGO: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+          PR_RAMA: ${{ github.head_ref }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/revisor.mjs "$RANGO"
 
   # Solo en la plantilla: un repositorio creado desde ella recibe los ficheros de este commit y
   # nada más, así que se exportan a una carpeta limpia y se comprueban ahí desde cero.

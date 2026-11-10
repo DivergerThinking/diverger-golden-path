@@ -25,8 +25,8 @@ set -euo pipefail
 
 fallar() { printf '%s\n' "$1" > "$RUNNER_TEMP/motivo"; echo "::error::$1"; exit 1; }
 
-# La salida de las comprobaciones, los diagnósticos y lo que dice el Auditor de seguridad los escribe o los cita el
-# código del proyecto, que cambia el modelo: van entre una etiqueta con 6 caracteres al azar que no aparecen en el
+# La salida de las comprobaciones, los diagnósticos y lo que dicen el Auditor de seguridad y el revisor de código los
+# escribe o los cita el código del proyecto, que cambia el modelo: van entre una etiqueta con 6 caracteres al azar que no aparecen en el
 # texto, para que no pueda cerrarla (W6 e I3 de harness#596; llegó a la plantilla con harness#717).
 delimitar() {
   local texto="$1" etiqueta
@@ -56,14 +56,16 @@ unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL GOOGLE_APPLICA
 # que cada intento recibe lo que queda, redondeado hacia abajo. TOPE_JOB y GASTADO llegan de las salidas de pasos anteriores, que el código de
 # las comprobaciones no puede cambiar. Una sesión reanudada ya incluye el gasto anterior: es un total, no se suma.
 tope="${TOPE_JOB:-$MAX_USD}"
-# Los Auditores de seguridad de los intentos anteriores (COSTES_AUDITOR) son sesiones aparte: se suman.
+# Los Auditores de seguridad y los revisores de código de los intentos anteriores (COSTES_AUDITOR) son sesiones
+# aparte: se suman.
 gastado=$(awk -v g="${GASTADO:-0}" -v a="${COSTES_AUDITOR:-}" 'BEGIN { n = split(a, v, " "); s = g + 0; for (i = 1; i <= n; i++) s += v[i]; print s }')
 restante=$(awk -v tope="$tope" -v gastado="$gastado" 'BEGIN { printf "%.2f", int((tope - gastado) * 100) / 100 }')
 awk -v restante="$restante" 'BEGIN { exit !(restante >= 0.5) }' \
   || fallar "El worker ha gastado $gastado USD de su tope de $tope USD: no queda margen para otro intento"
 
-# El veredicto del Auditor es el de este intento: el del anterior ya no vale (worker-auditor.sh lo vuelve a dejar).
-rm -f "$RUNNER_TEMP/auditor"
+# Los veredictos del Auditor y del revisor son los de este intento: los del anterior ya no valen (worker-auditor.sh y
+# worker-revisor.sh los vuelven a dejar).
+rm -f "$RUNNER_TEMP/auditor" "$RUNNER_TEMP/revisor"
 
 if [ "$intento" = 1 ]; then
   instrucciones="Usa la skill diverger-dev:implement para construir la tarea $TAREA de la iniciativa $INICIATIVA."
@@ -96,6 +98,13 @@ else
     instrucciones="El Auditor de seguridad ha bloqueado tu intento $anterior: ha encontrado un fallo de seguridad que se puede explotar. Corrige la causa en el código, para que la explotación deje de funcionar, sin quitar funcionalidad que pida la tarea y manteniendo los tests en verde, y termina otra vez. Esto es lo que dice el Auditor, que cita el código del proyecto. $DATOS
 
 $(delimitar "$(head -c 8000 "$RUNNER_TEMP/auditor-$anterior.md")" auditor)"
+  elif [ "$(cat "$RUNNER_TEMP/veredicto-$anterior" 2>/dev/null)" = bloquea ]; then
+    # Las comprobaciones y el Auditor pasaron, pero el revisor de código bloqueó el cambio con una prueba (EN-OPS-08).
+    [ -s "$RUNNER_TEMP/revisor-$anterior.md" ]       || fallar "No está lo que dijo el revisor de código en el intento $anterior: el modelo no sabría qué corregir"
+    tras_rojo=""
+    instrucciones="El revisor de código ha bloqueado tu intento $anterior: el código da un resultado equivocado con una entrada concreta o no cumple un criterio de aceptación de la tarea. Corrige la causa en el código, para que la prueba que da el revisor deje de fallar, sin quitar funcionalidad que pida la tarea y manteniendo los tests en verde, y termina otra vez. Esto es lo que dice el revisor, que cita el código del proyecto. $DATOS
+
+$(delimitar "$(head -c 8000 "$RUNNER_TEMP/revisor-$anterior.md")" revisor)"
   else
     [ -s "$RUNNER_TEMP/comprobaciones-$anterior.log" ] \
       || fallar "No está la salida de las comprobaciones del intento $anterior: el modelo no sabría qué corregir"
@@ -150,8 +159,8 @@ if [ -n "$cubierta" ]; then
   echo "::notice::El worker dice que la tarea ya estaba cubierta: ${cubierta:0:300}"
 fi
 # La causa de las comprobaciones que el worker corrigió (HU-NUC-20, harness#675). Solo tras unas comprobaciones en
-# rojo, como finish_worker en el modo interactivo: ni el primer intento ni el que sigue a un bloqueo del Auditor se
-# pueden inventar un fallo. Lo que dice el modelo es un dato: «Comprobar el resultado» lo arregla antes de guardarlo.
+# rojo, como finish_worker en el modo interactivo: ni el primer intento ni el que sigue a un bloqueo del Auditor o del
+# revisor de código se pueden inventar un fallo. Lo que dice el modelo es un dato: «Comprobar el resultado» lo arregla antes de guardarlo.
 if [ -n "$tras_rojo" ]; then
   # Solo la línea justo antes de la última no vacía, que es donde se le pide: una «FALLO:» en otro sitio puede venir
   # citada de la salida de las comprobaciones, que escribe el código del proyecto (harness#730).

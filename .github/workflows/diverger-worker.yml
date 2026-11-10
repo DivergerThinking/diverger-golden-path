@@ -77,6 +77,7 @@ jobs:
       contents: read
       actions: read # Solo para saber quién lanzó la ejecución (EN-OPS-06).
       id-token: write # Solo para la cuenta de telemetría (ADR 0007).
+      statuses: write # Solo para el estado revisor-codigo del commit de la PR (EN-OPS-08).
     env:
       INICIATIVA: ${{ inputs.initiative }}
       TAREA: ${{ inputs.task }}
@@ -126,6 +127,7 @@ jobs:
           echo "WORKTREE=$RUNNER_TEMP/worktree" >> "$GITHUB_ENV"
           echo "PLUGIN_DEV=$GITHUB_WORKSPACE/.diverger-dev/plugins/diverger-dev" >> "$GITHUB_ENV"
           echo "PLUGIN_QUALITY=$GITHUB_WORKSPACE/.diverger-dev/plugins/diverger-quality" >> "$GITHUB_ENV"
+          echo "PLUGIN_NUCLEO=$RUNNER_TEMP/plugin-revisor" >> "$GITHUB_ENV"
 
       # Sin credenciales guardadas en .git: ni el modelo ni lo que deje en el repositorio pueden empujar.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -223,8 +225,8 @@ jobs:
             | sudo tee /etc/claude-code/managed-settings.json >/dev/null
           echo "Telemetría en BigQuery con github.run_id=$GITHUB_RUN_ID"
 
-      # Los plugins diverger-dev y diverger-quality (el del Auditor de seguridad) se descargan del harness, que es
-      # privado, con un token de la App que solo puede leer su contenido. El token se pide y se usa en estos dos pasos,
+      # Los plugins diverger-dev y diverger-quality (el del Auditor de seguridad), y el agente revisor-codigo del núcleo,
+      # se descargan del harness, que es privado, con un token de la App que solo puede leer su contenido. El token se pide y se usa en estos dos pasos,
       # antes del modelo, y no llega a su entorno; los plugins quedan fuera del worktree, donde el modelo no puede escribir.
       - name: Token de lectura de diverger-dev
         id: token-dev
@@ -245,6 +247,14 @@ jobs:
           sparse-checkout: |
             plugins/diverger-dev
             plugins/diverger-quality
+            plugins/diverger/agents
+      # Del núcleo solo hace falta el agente revisor-codigo (EN-OPS-08): va en un plugin con el nombre del núcleo y sin
+      # nada más, para que no se carguen sus hooks ni su servidor MCP.
+      - name: Plugin del revisor de código
+        run: |
+          mkdir -p "$PLUGIN_NUCLEO/.claude-plugin" "$PLUGIN_NUCLEO/agents"
+          echo '{"name": "diverger"}' > "$PLUGIN_NUCLEO/.claude-plugin/plugin.json"
+          cp .diverger-dev/plugins/diverger/agents/revisor-codigo.md "$PLUGIN_NUCLEO/agents/"
 
       # Tres intentos como mucho. En cada uno, el modelo trabaja (worker-modelo.sh) y después el job
       # ejecuta las comprobaciones en otro paso, sin la clave de Anthropic (worker-comprobar.sh). Los
@@ -316,14 +326,33 @@ jobs:
           ENV: ""
         working-directory: ${{ env.WORKTREE }}
         run: bash "$GITHUB_WORKSPACE/.github/diverger/worker-auditor.sh" 1
+      # El revisor de código revisa el cambio frente a los criterios de la tarea si el Auditor no lo bloquea (EN-OPS-08).
+      # Con «bloquea» sale con 1 y se lanza el intento siguiente con su prueba; sin veredicto, la tarea no pasa.
+      - name: Revisor de código
+        id: revisor-1
+        if: steps.auditor-1.outputs.veredicto == 'comentar'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          GASTADO: ${{ steps.worker-1.outputs.coste }}
+          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }}"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+          TOPE_JOB: ${{ steps.tope.outputs.tope }}
+          CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+          BASH_ENV: ""
+          ENV: ""
+        working-directory: ${{ env.WORKTREE }}
+        run: bash "$GITHUB_WORKSPACE/.github/diverger/worker-revisor.sh" 1
 
       - name: Worker, intento 2
         id: worker-2
         if: steps.comprobaciones-1.outcome == 'failure' || steps.auditor-1.outputs.veredicto == 'bloquear'
+          || steps.revisor-1.outputs.veredicto == 'bloquea'
         timeout-minutes: 20
         env:
           GASTADO: ${{ steps.worker-1.outputs.coste }}
-          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }}"
+          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }} ${{ steps.revisor-1.outputs.coste }}"
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
           TOPE_JOB: ${{ steps.tope.outputs.tope }}
@@ -335,6 +364,7 @@ jobs:
       - name: Comprobaciones, intento 2
         id: comprobaciones-2
         if: steps.comprobaciones-1.outcome == 'failure' || steps.auditor-1.outputs.veredicto == 'bloquear'
+          || steps.revisor-1.outputs.veredicto == 'bloquea'
         continue-on-error: true
         timeout-minutes: 15
         run: bash .github/diverger/worker-comprobar.sh 2
@@ -347,7 +377,7 @@ jobs:
         timeout-minutes: 10
         env:
           GASTADO: ${{ steps.worker-2.outputs.coste }}
-          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }}"
+          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }} ${{ steps.revisor-1.outputs.coste }}"
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
           TOPE_JOB: ${{ steps.tope.outputs.tope }}
@@ -356,14 +386,33 @@ jobs:
           ENV: ""
         working-directory: ${{ env.WORKTREE }}
         run: bash "$GITHUB_WORKSPACE/.github/diverger/worker-auditor.sh" 2
+      # El revisor de código revisa el cambio frente a los criterios de la tarea si el Auditor no lo bloquea (EN-OPS-08).
+      # Con «bloquea» sale con 1 y se lanza el intento siguiente con su prueba; sin veredicto, la tarea no pasa.
+      - name: Revisor de código, intento 2
+        id: revisor-2
+        if: steps.auditor-2.outputs.veredicto == 'comentar'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          GASTADO: ${{ steps.worker-2.outputs.coste }}
+          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }} ${{ steps.auditor-2.outputs.coste }} ${{ steps.revisor-1.outputs.coste }}"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+          TOPE_JOB: ${{ steps.tope.outputs.tope }}
+          CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+          BASH_ENV: ""
+          ENV: ""
+        working-directory: ${{ env.WORKTREE }}
+        run: bash "$GITHUB_WORKSPACE/.github/diverger/worker-revisor.sh" 2
 
       - name: Worker, intento 3
         id: worker-3
         if: steps.comprobaciones-2.outcome == 'failure' || steps.auditor-2.outputs.veredicto == 'bloquear'
+          || steps.revisor-2.outputs.veredicto == 'bloquea'
         timeout-minutes: 20
         env:
           GASTADO: ${{ steps.worker-2.outputs.coste || steps.worker-1.outputs.coste }}
-          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }} ${{ steps.auditor-2.outputs.coste }}"
+          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }} ${{ steps.auditor-2.outputs.coste }} ${{ steps.revisor-1.outputs.coste }} ${{ steps.revisor-2.outputs.coste }}"
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
           TOPE_JOB: ${{ steps.tope.outputs.tope }}
@@ -375,6 +424,7 @@ jobs:
       - name: Comprobaciones, intento 3
         id: comprobaciones-3
         if: steps.comprobaciones-2.outcome == 'failure' || steps.auditor-2.outputs.veredicto == 'bloquear'
+          || steps.revisor-2.outputs.veredicto == 'bloquea'
         continue-on-error: true
         timeout-minutes: 15
         run: bash .github/diverger/worker-comprobar.sh 3
@@ -387,7 +437,7 @@ jobs:
         timeout-minutes: 10
         env:
           GASTADO: ${{ steps.worker-3.outputs.coste }}
-          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }} ${{ steps.auditor-2.outputs.coste }}"
+          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }} ${{ steps.auditor-2.outputs.coste }} ${{ steps.revisor-1.outputs.coste }} ${{ steps.revisor-2.outputs.coste }}"
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
           TOPE_JOB: ${{ steps.tope.outputs.tope }}
@@ -396,6 +446,24 @@ jobs:
           ENV: ""
         working-directory: ${{ env.WORKTREE }}
         run: bash "$GITHUB_WORKSPACE/.github/diverger/worker-auditor.sh" 3
+      # El revisor de código revisa el cambio frente a los criterios de la tarea si el Auditor no lo bloquea (EN-OPS-08).
+      # Con «bloquea» sale con 1 y se lanza el intento siguiente con su prueba; sin veredicto, la tarea no pasa.
+      - name: Revisor de código, intento 3
+        id: revisor-3
+        if: steps.auditor-3.outputs.veredicto == 'comentar'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          GASTADO: ${{ steps.worker-3.outputs.coste }}
+          COSTES_AUDITOR: "${{ steps.auditor-1.outputs.coste }} ${{ steps.auditor-2.outputs.coste }} ${{ steps.auditor-3.outputs.coste }} ${{ steps.revisor-1.outputs.coste }} ${{ steps.revisor-2.outputs.coste }}"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+          TOPE_JOB: ${{ steps.tope.outputs.tope }}
+          CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+          BASH_ENV: ""
+          ENV: ""
+        working-directory: ${{ env.WORKTREE }}
+        run: bash "$GITHUB_WORKSPACE/.github/diverger/worker-revisor.sh" 3
 
       # Lo que el job acepta del worker: comprobaciones en verde, algún cambio y ninguno en el plan ni en los
       # workflows. Entonces es el job, no el modelo, quien marca la tarea como hecha. Sin cambios solo se acepta si el
@@ -409,10 +477,16 @@ jobs:
           auditor=$(cat "$RUNNER_TEMP/auditor" 2>/dev/null || echo ninguno)
           [ "$auditor" != bloquear ] \
             || fallar "El Auditor de seguridad sigue bloqueando el cambio después de 3 intentos: hay un fallo explotable"
+          # El del revisor de código del último intento (EN-OPS-08), que solo se ejecuta si el Auditor no bloquea.
+          revisor=$(cat "$RUNNER_TEMP/revisor" 2>/dev/null || echo ninguno)
+          [ "$revisor" != bloquea ] \
+            || fallar "El revisor de código sigue bloqueando el cambio después de 3 intentos: falla un caso concreto o un criterio de aceptación"
           [ "$(cat "$RUNNER_TEMP/comprobaciones" 2>/dev/null)" = verde ] \
             || fallar "Las comprobaciones (npm run check) siguen en rojo después de 3 intentos"
           [ "$auditor" = comentar ] \
             || fallar "Sin veredicto del Auditor de seguridad: $(cat "$RUNNER_TEMP/motivo-auditor" 2>/dev/null || echo "no se ha ejecutado")"
+          [ "$revisor" = aprueba ] \
+            || fallar "Sin veredicto del revisor de código: $(cat "$RUNNER_TEMP/motivo-revisor" 2>/dev/null || echo "no se ha ejecutado")"
           git add -A
           if git diff --cached --quiet; then
             [ -s "$RUNNER_TEMP/cubierta" ] || fallar "El worker no ha cambiado nada"
@@ -503,6 +577,9 @@ jobs:
         working-directory: ${{ env.WORKTREE }}
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+          # El estado revisor-codigo lo publica el token del job, no el de la App: así su autor es github-actions[bot],
+          # que es lo que exige el job «revisor» del CI (EN-OPS-08).
+          TOKEN_ESTADOS: ${{ github.token }}
           LANZADO_POR: ${{ steps.lanzador.outputs.login }}
         run: |
           fallar() { printf '%s\n' "$1" > "$RUNNER_TEMP/motivo"; echo "::error::$1"; exit 1; }
@@ -513,6 +590,13 @@ jobs:
           git -c core.hooksPath=/dev/null push --quiet --force \
             "https://x-access-token:$GH_TOKEN@github.com/$repo.git" "HEAD:refs/heads/$RAMA" \
             || fallar "GitHub ha rechazado el push de $RAMA"
+          # El revisor de código aprobó este commit («Comprobar el resultado» no deja seguir sin su aprobación): se anota
+          # en él antes de abrir la PR, para que el job «revisor» del CI lo encuentre. Otro commit en la rama no lo tiene.
+          sha=$(git rev-parse HEAD)
+          GH_TOKEN="$TOKEN_ESTADOS" gh api -X POST "repos/$repo/statuses/$sha" -f state=success -f context=revisor-codigo \
+            -f description="El revisor de código aprueba el cambio de $TAREA" \
+            -f target_url="$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID" > /dev/null \
+            || fallar "No se ha podido anotar la aprobación del revisor de código en $sha"
           titulo=$(jq -r .title "$FICHERO_TAREA")
           # Lo que escribió un modelo que ha leído el código del proyecto, en un bloque de código con una valla más
           # larga que cualquier serie de comillas invertidas del texto: ahí GitHub no avisa a nadie por una @mención
@@ -538,6 +622,14 @@ jobs:
               echo
               # Aquí el veredicto siempre es comentar: «Comprobar el resultado» para la tarea con cualquier otro.
               echo "**Auditor de seguridad:** sin fallos explotables en el último intento. Lo que escribió, tal cual:"
+              echo
+              bloque "$ultimo"
+            fi
+            ultimo=$(ls "$RUNNER_TEMP"/revisor-*.md 2>/dev/null | sort | tail -n 1)
+            if [ -n "$ultimo" ]; then
+              echo
+              # Aquí el veredicto siempre es aprueba: «Comprobar el resultado» para la tarea con cualquier otro.
+              echo "**Revisor de código:** sin fallos de corrección ni de requisitos en el último intento. Lo que escribió, tal cual:"
               echo
               bloque "$ultimo"
             fi
@@ -581,6 +673,10 @@ jobs:
               echo
               cat "$(ls "$RUNNER_TEMP"/auditor-*.md | sort | tail -n 1)"
             fi
+            if [ "$(cat "$RUNNER_TEMP/revisor" 2>/dev/null)" = bloquea ]; then
+              echo
+              cat "$(ls "$RUNNER_TEMP"/revisor-*.md | sort | tail -n 1)"
+            fi
             if [ -s "$RUNNER_TEMP/salida.json" ]; then
               echo
               echo "**Final de la respuesta del modelo:**"
@@ -600,7 +696,7 @@ jobs:
           retention-days: 30
 
       # El coste para el bucle: también si el job falla o se cancela. Sin artefacto, cuenta el tope entero. Sale de
-      # las salidas de los pasos del modelo y del Auditor, que el código de las comprobaciones no puede cambiar.
+      # las salidas de los pasos del modelo, del Auditor y del revisor, que el código de las comprobaciones no puede cambiar.
       - name: Coste del job
         if: always()
         env:
@@ -612,6 +708,9 @@ jobs:
             ${{ steps.auditor-1.outcome }}:${{ steps.auditor-1.outputs.coste }}
             ${{ steps.auditor-2.outcome }}:${{ steps.auditor-2.outputs.coste }}
             ${{ steps.auditor-3.outcome }}:${{ steps.auditor-3.outputs.coste }}
+            ${{ steps.revisor-1.outcome }}:${{ steps.revisor-1.outputs.coste }}
+            ${{ steps.revisor-2.outcome }}:${{ steps.revisor-2.outputs.coste }}
+            ${{ steps.revisor-3.outcome }}:${{ steps.revisor-3.outputs.coste }}
         run: bash .github/diverger/worker-coste.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()

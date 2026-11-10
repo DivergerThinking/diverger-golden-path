@@ -21,8 +21,8 @@ for intento in ${INTENTOS:-}; do
 done
 [ -n "${INTENTOS:-}" ] || exit 0
 [ "$lanzados" -gt 0 ] || coste=0
-# Los Auditores de seguridad (HU-CAL-01) son sesiones aparte: se suman. Uno lanzado sin coste, igual que un
-# intento: no hay fichero y el bucle cuenta el tope entero.
+# Los Auditores de seguridad (HU-CAL-01) y los revisores de código (EN-OPS-08), que llegan en AUDITORES, son sesiones
+# aparte: se suman. Uno lanzado sin coste, igual que un intento: no hay fichero y el bucle cuenta el tope entero.
 for auditor in ${AUDITORES:-}; do
   resultado=${auditor%%:*}
   valor=${auditor#*:}
