@@ -31,9 +31,34 @@ describe("job «revisor» de ci.yml", () => {
     expect(job?.permissions).toEqual({ contents: "read", statuses: "read" });
     expect(job?.steps[0]?.with?.ref).toBe("${{ github.event.pull_request.base.sha }}");
     const ultimo = job?.steps.at(-1);
-    expect(ultimo?.run).toBe('node scripts/revisor.mjs "$RANGO"');
+    expect(ultimo?.run).toMatch(/^\s*node scripts\/revisor\.mjs "\$RANGO"\s*$/m);
     expect(ultimo?.env).toMatchObject({ PR_RAMA: "${{ github.head_ref }}", REPO: "${{ github.repository }}",
       GH_TOKEN: "${{ github.token }}" });
+  });
+
+  it.skipIf(!CON_SCRIPT)("pasa con un aviso si la rama base aún no tiene el script: es la PR que lo añade", () => {
+    const vacio = mkdtempSync(join(tmpdir(), "revisor-sin-script-"));
+    try {
+      const r = spawnSync("bash", ["-c", job?.steps.at(-1)?.run ?? "exit 9"], { cwd: vacio, encoding: "utf8",
+        env: { ...process.env, RANGO: "a..b" } });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain("::notice::La rama base no tiene scripts/revisor.mjs");
+    } finally {
+      rmSync(vacio, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!CON_SCRIPT)("con el script en la rama base, su fallo hace fallar el job", () => {
+    const base = mkdtempSync(join(tmpdir(), "revisor-con-script-"));
+    try {
+      mkdirSync(join(base, "scripts"));
+      writeFileSync(join(base, "scripts", "revisor.mjs"), "process.exit(1);\n");
+      const r = spawnSync("bash", ["-c", job?.steps.at(-1)?.run ?? "exit 9"], { cwd: base, encoding: "utf8",
+        env: { ...process.env, RANGO: "a..b" } });
+      expect(r.status).toBe(1);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });
 

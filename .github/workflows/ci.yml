@@ -176,13 +176,20 @@ jobs:
         env:
           NUMERO: ${{ github.event.pull_request.number }}
         run: git fetch --quiet origin "refs/pull/$NUMERO/head"
+      # Sin el script en la rama base, la PR es la que lo añade: no hay revisión que comprobar todavía. Un nivel
+      # lo recibe al sincronizarse con la plantilla, antes de que el ruleset exija este job.
       - name: Revisión del revisor de código
         env:
           RANGO: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
           PR_RAMA: ${{ github.head_ref }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/revisor.mjs "$RANGO"
+        run: |
+          if [ ! -f scripts/revisor.mjs ]; then
+            echo "::notice::La rama base no tiene scripts/revisor.mjs: esta PR es la que lo añade y no hay revisión que comprobar."
+            exit 0
+          fi
+          node scripts/revisor.mjs "$RANGO"
 
   # Solo en la plantilla: un repositorio creado desde ella recibe los ficheros de este commit y
   # nada más, así que se exportan a una carpeta limpia y se comprueban ahí desde cero.
