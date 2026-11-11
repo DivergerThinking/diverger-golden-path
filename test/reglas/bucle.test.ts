@@ -66,11 +66,12 @@ describe("workflow del bucle desatendido", () => {
     expect(WF.concurrency).toEqual({ group: "diverger-bucle-${{ inputs.initiative }}", "cancel-in-progress": false });
   });
 
-  it("el token del job solo escribe en Actions e issues, y GCP solo con la cuenta de telemetría", () => {
+  it("el token del job solo escribe en Actions, issues y PR, sin tocar el contenido, y GCP solo con la cuenta de telemetría", () => {
     expect(WF.permissions).toEqual({ contents: "read" });
-    // Actions, issues y PR, para el GITHUB_TOKEN con el que el bucle lanza los workers (harness#753).
+    // Actions, issues y PR, para el GITHUB_TOKEN con el que el bucle lanza los workers (harness#753). En las PR escribe
+    // para cerrar la de una tarea con conflictos (harness#770); sin contents: write no puede empujar a ninguna rama.
     expect(JOB.permissions).toEqual({ contents: "read", "id-token": "write", actions: "write", issues: "write",
-      "pull-requests": "read" });
+      "pull-requests": "write" });
     expect(INICIO_PREVIA).toBeGreaterThan(0);
     expect(SIN_PREVIA).not.toMatch(/GCP_DEPLOY_SA|environment:/);
     const auth = PASOS.filter((p) => p.uses?.startsWith("google-github-actions/auth@") && p.id !== "previa-gcp");

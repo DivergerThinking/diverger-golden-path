@@ -53,10 +53,12 @@ jobs:
       contents: read
       id-token: write # Solo para la cuenta de telemetría: la comprobación previa, el arranque y el final (ADR 0017).
       # Para el GITHUB_TOKEN con el que el bucle lanza los workers (workflow_dispatch sí crea ejecuciones con ese
-      # token), mira sus jobs y sus PR y abre la issue de una tarea bloqueada (ADR 0029 del harness).
+      # token), mira sus jobs y sus PR y abre la issue de una tarea bloqueada (ADR 0029 del harness). Escribe en las PR
+      # solo para cerrar la de una tarea con conflictos con la rama base, que se vuelve a construir (harness#770); no
+      # aprueba ni integra nada, y sin contents: write no toca ninguna rama.
       actions: write
       issues: write
-      pull-requests: read
+      pull-requests: write
     env:
       INICIATIVA: ${{ inputs.initiative }}
       MAX_WORKERS: ${{ inputs.max-workers }}
