@@ -7,7 +7,7 @@
 // personas con ids de tareas del harness, y su PR esperaría para siempre un revisor que solo lanza el worker
 // (golden-path#70). No es de una tarea la del plan, la de la aplicación de un cambio ni las de mantenimiento del kit
 // de evaluación: pasan sin revisión. Un commit nuevo en la rama no tiene el estado, así que la PR vuelve a fallar
-// hasta que un worker lo revise: la salida es relanzar la tarea. Con la política automática, el ruleset exige este job.
+// hasta que un worker lo revise: la salida es cerrar la PR y relanzar la tarea. Con la política automática, el ruleset exige este job.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -51,7 +51,8 @@ export function veredicto(tareasPR, estados, motivo = "") {
       + "commit. La publica el worker del modo desatendido cuando el revisor aprueba su cambio; un commit que no viene de "
       + "un worker no la tiene. Con la política automática nadie aprueba las PR, así que la de una tarea solo se integra "
       + "con esa revisión. Si un commit posterior, como «Update branch» o la resolución de un conflicto, se la ha quitado, "
-      + "relanza la tarea para que un worker la vuelva a construir y revisar." };
+      + "cierra la PR y relanza la tarea, para que un worker la vuelva a construir y revisar: con la PR abierta, el worker "
+      + "trabaja y acaba fallando al abrir la suya." };
   }
   if (estado.creator?.login !== AUTOR) {
     return { falla: true, mensaje: `El estado ${CONTEXTO} de la PR de la tarea ${nombre} lo ha publicado `

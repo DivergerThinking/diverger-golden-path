@@ -187,7 +187,16 @@ describe.skipIf(!CON_SCRIPT)("el script del job «revisor»", () => {
     commit("Merge branch 'main' into diverger/prestamos/TA-004");
     const r = comprobar(RAMA, []);
     expect(r.codigo).toBe(1);
-    expect(r.errores).toContain("relanza la tarea");
+    expect(r.errores).toContain("cierra la PR y relanza la tarea");
+  });
+
+  it("una rama de worker con un id de tarea que el worker no acepta no es de una tarea, aunque el fichero exista", () => {
+    writeFileSync(join(repo, ".diverger", "prestamos", "tasks", ".oculta.json"), "{}\n");
+    commit("feat: .oculta");
+    const r = comprobar("diverger/prestamos/.oculta", []);
+    expect(r.codigo).toBe(0);
+    expect(r.salida).toContain("No es la PR de una tarea");
+    expect(r.llamada).toBe("");
   });
 
   it.each([
