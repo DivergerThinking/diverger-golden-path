@@ -64,7 +64,8 @@ describe("registro de los contextos", () => {
     expect(r.registro).toContain("export const contextos: FastifyPluginAsync<OpcionesContexto>[] = [];");
   });
 
-  it.each(["Prestamos", "mis_equipos", "-guion", 'a"b'])("falla, sin escribir el registro, con la carpeta src/%s, que no es un id de contexto", (id) => {
+  // Una comilla no vale en el nombre de una carpeta de Windows.
+  it.each(["Prestamos", "mis_equipos", "-guion", "a.b", ...(process.platform === "win32" ? [] : ['a"b'])])("falla, sin escribir el registro, con la carpeta src/%s, que no es un id de contexto", (id) => {
     contexto("bien");
     contexto(id);
     const r = generar();
@@ -73,10 +74,10 @@ describe("registro de los contextos", () => {
     expect(r.registro).toBeUndefined();
   });
 
-  it("npm run gen genera el registro, que no se versiona, y la plantilla ya no tiene un fichero común de contextos", () => {
+  // Solo lo que sincronizar-nivel del harness lleva a un nivel (scripts/, test/reglas/ y package.json): ni .gitignore
+  // ni app/ cambian hasta el reinicio, así que un test sobre ellos dejaría en rojo un nivel recién sincronizado.
+  it("npm run gen genera el registro", () => {
     const paquete = JSON.parse(readFileSync(join(RAIZ, "package.json"), "utf8")) as { scripts: Record<string, string> };
     expect(paquete.scripts.gen).toContain("node scripts/generar-contextos.mjs");
-    expect(readFileSync(join(RAIZ, ".gitignore"), "utf8")).toMatch(/^app\/contextos\.gen\.ts$/m);
-    expect(existsSync(join(RAIZ, "app", "contextos.ts"))).toBe(false);
   });
 });
