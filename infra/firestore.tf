@@ -53,3 +53,10 @@ resource "google_project_iam_member" "datos" {
     expression  = "resource.name == \"projects/${var.proyecto}/databases/${local.nombre}\""
   }
 }
+
+# PRUEBA (Diverger-ExP-Harness#256): no se integra. El CI tiene que rechazar serviceAccountUser a nivel de proyecto.
+resource "google_project_iam_member" "prueba_sa_user" {
+  project = var.proyecto
+  role    = "roles/iam.serviceAccountUser"
+  member  = "serviceAccount:${var.cuenta_cloud_deploy}"
+}
