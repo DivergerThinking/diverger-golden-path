@@ -36,12 +36,13 @@ src/<id>/api.gen.ts                    tipos generados del contrato (npm run gen
 src/<id>/...                           lógica interna del contexto
 lib/                                   código común sin negocio: el inicio de sesión y el puerto de datos (datos.ts, firestore.ts)
 app/                                   servidor: arranque, autenticación y registro de los contextos
+app/contextos.gen.ts                   registro generado de los contextos de src/ (npm run gen; no se versiona)
 web/                                   frontend en React
 infra/                                 infraestructura como código de la aplicación en GCP
 test/                                  pruebas de las reglas del repo
 ```
 
-El contexto `ejemplo` solo sirve para que todo funcione desde el primer momento: el arquitecto lo sustituye por los contextos de la aplicación. Para añadir un contexto: su contrato en `spec/contextos/<id>/api.openapi.json`, su código en `src/<id>/` con un `index.ts` que exporte sus funciones públicas y sus rutas, y una línea en `app/contextos.ts`.
+El contexto `ejemplo` solo sirve para que todo funcione desde el primer momento: el arquitecto lo sustituye por los contextos de la aplicación. Para añadir un contexto: su contrato en `spec/contextos/<id>/api.openapi.json`, y su código en `src/<id>/`, con un `index.ts` que exporte sus funciones públicas y sus rutas en `rutas`. No hace falta registrarlo en ningún fichero común: `npm run gen` genera `app/contextos.gen.ts` con todas las carpetas de `src/` que tienen `index.ts`, y el servidor registra esas rutas. Así, dos tareas que construyen contextos distintos no tocan ningún fichero en común y sus PR se integran sin conflictos (golden-path#71). El nombre de la carpeta es el id del contexto, en minúsculas, con números y guiones; con otro nombre, `npm run gen` falla y dice cuál es.
 
 ## Reglas que comprueba el CI
 
