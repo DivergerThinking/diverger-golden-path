@@ -3,6 +3,7 @@
 import { execFile } from "node:child_process";
 import type { Server } from "node:http";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { arrancar, lanzadoPorElBucle, PERSONAS, REPO, type Datos } from "./github-falso.js";
@@ -77,5 +78,53 @@ describe("quién lanzó la ejecución", () => {
     const r = await lanzador({ ejecuciones: lanzadoPorElBucle("joselcs"), usuarios: PERSONAS }, "800", "prestamos");
     expect(r.codigo).toBe(1);
     expect(r.errores).toContain("La ejecución 800 no es del worker");
+  });
+});
+
+describe("lecturas de la API de GitHub con fallos pasajeros (harness#794)", () => {
+  const RUTA = `/repos/${REPO}/pulls/55`;
+  type Api = (path: string) => Promise<unknown>;
+  type Fabrica = (token: string, base: string, opciones: { dormir: (ms: number) => Promise<void> }) => Api;
+
+  // Las esperas se apuntan en vez de dormir, para que el test no tarde.
+  async function cliente(base: string, esperas: number[]): Promise<Api> {
+    // El script no tiene tipos: se importa por su ruta, como un módulo cualquiera, y se le da el tipo aquí.
+    const { apiDeGitHub } = (await import(pathToFileURL(SCRIPT).href)) as { apiDeGitHub: Fabrica };
+    return apiDeGitHub("token-de-prueba", base, { dormir: (ms) => { esperas.push(ms); return Promise.resolve(); } });
+  }
+
+  async function leer(fallos: number, esperas: number[]): Promise<unknown> {
+    const api = await arrancar({ ejecuciones: [], usuarios: PERSONAS, prs: { 55: { body: "Lanzado por @joselcs." } },
+      fallos: { [RUTA]: fallos } });
+    servidor = api.servidor;
+    return (await cliente(api.url, esperas))(`repos/${REPO}/pulls/55`);
+  }
+
+  it("reintenta un 503 y espera 0,5 s y luego 1 s", async () => {
+    const esperas: number[] = [];
+    expect(await leer(2, esperas)).toEqual({ body: "Lanzado por @joselcs." });
+    expect(esperas).toEqual([500, 1000]);
+  });
+
+  it("tras el tercer 503 se rinde y dice qué respondió", async () => {
+    const esperas: number[] = [];
+    await expect(leer(3, esperas)).rejects.toThrow(`La API de GitHub responde 503 a repos/${REPO}/pulls/55`);
+    expect(esperas).toEqual([500, 1000]);
+  });
+
+  it("un 404 no se reintenta", async () => {
+    const api = await arrancar({ ejecuciones: [], usuarios: PERSONAS });
+    servidor = api.servidor;
+    const esperas: number[] = [];
+    await expect((await cliente(api.url, esperas))(`repos/${REPO}/pulls/99`)).rejects.toThrow("responde 404");
+    expect(esperas).toEqual([]);
+  });
+
+  it("un fallo de la red se reintenta y, si sigue, lo dice", async () => {
+    const esperas: number[] = [];
+    // Un puerto en el que no escucha nadie: fetch falla sin respuesta.
+    await expect((await cliente("http://127.0.0.1:9", esperas))("repos/x/y/pulls/1"))
+      .rejects.toThrow("La API de GitHub no responde a repos/x/y/pulls/1");
+    expect(esperas).toEqual([500, 1000]);
   });
 });
