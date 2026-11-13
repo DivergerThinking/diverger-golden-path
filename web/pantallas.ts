@@ -23,10 +23,11 @@ export interface Pantalla {
   titulo: string;
   Componente: ComponentType<{ sesion: Sesion }>;
   /**
-   * Si la persona puede verla. Sin ella, la ve cualquiera que haya iniciado sesión. Ocultarla no protege nada: la API
-   * sigue respondiendo 403 a quien no puede hacer la operación.
+   * Si la persona puede verla. Sin ella, la ve cualquiera que haya iniciado sesión. Puede preguntar a la API, por
+   * ejemplo con siPuedeLlamar. Si falla, la pantalla no se enseña. Ocultarla no protege nada: la API sigue respondiendo
+   * 403 a quien no puede hacer la operación.
    */
-  visible?: (persona: Persona) => boolean;
+  visible?: (sesion: Sesion) => boolean | Promise<boolean>;
 }
 
 /** Un error de la API con su código y el mensaje de su cuerpo ({"error": "…"}), para enseñarlo tal cual. */
@@ -66,4 +67,17 @@ export async function api<T>(sesion: Sesion, ruta: string, opciones: { metodo?: 
     throw new ErrorDeLaApi(respuesta.status, mensaje);
   }
   return cuerpo as T;
+}
+
+/**
+ * Una pantalla solo para quien puede hacer una operación de lectura: la llama, y la pantalla no se enseña si la API
+ * responde 401 o 403. Sirve, por ejemplo, para las pantallas de IT sin añadir al contrato una ruta que diga el rol: la de
+ * los préstamos vencidos, que solo puede leer IT, dice si la persona es de IT.
+ */
+export function siPuedeLlamar(ruta: string): (sesion: Sesion) => Promise<boolean> {
+  return (sesion) =>
+    api(sesion, ruta).then(
+      () => true,
+      (motivo: unknown) => !(motivo instanceof ErrorDeLaApi && (motivo.status === 401 || motivo.status === 403)),
+    );
 }

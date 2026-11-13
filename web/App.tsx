@@ -18,6 +18,8 @@ export function App({ botonDeGoogle, pantallas = pantallasDeLaAplicacion }: AppP
   const [sesion, setSesion] = useState<Sesion | null>(null);
   const [elegida, setElegida] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Las pantallas que la persona puede ver; null mientras se pregunta a cada una. */
+  const [visibles, setVisibles] = useState<Pantalla[] | null>(null);
 
   useEffect(() => {
     const elemento = boton.current;
@@ -42,17 +44,37 @@ export function App({ botonDeGoogle, pantallas = pantallasDeLaAplicacion }: AppP
     });
   }, [botonDeGoogle]);
 
-  const visibles = sesion ? pantallas.filter((p) => !p.visible || p.visible(sesion.persona)) : [];
-  const actual = visibles.find((p) => p.id === elegida) ?? visibles[0];
+  useEffect(() => {
+    if (!sesion) return;
+    let vigente = true;
+    // Cada pantalla dice si la persona puede verla, también preguntando a la API; si falla, no se enseña.
+    const puedeVer = (p: Pantalla): Promise<boolean> =>
+      Promise.resolve()
+        .then(() => (p.visible ? p.visible(sesion) : true))
+        .catch(() => false);
+    Promise.all(pantallas.map(puedeVer))
+      .then((puede) => {
+        if (vigente) setVisibles(pantallas.filter((_, i) => puede[i] === true));
+      })
+      .catch(() => {
+        if (vigente) setVisibles([]);
+      });
+    return () => {
+      vigente = false;
+    };
+  }, [sesion, pantallas]);
+
+  const lista = visibles ?? [];
+  const actual = lista.find((p) => p.id === elegida) ?? lista[0];
 
   return (
     <main>
       <h1>Aplicación</h1>
       {sesion ? <p>Hola, {sesion.persona.nombre}</p> : <div ref={boton} />}
-      {sesion && visibles.length > 0 && (
+      {sesion && lista.length > 0 && (
         <nav aria-label="Pantallas">
           <ul>
-            {visibles.map((p) => (
+            {lista.map((p) => (
               <li key={p.id}>
                 <button
                   type="button"

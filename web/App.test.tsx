@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { App } from "./App.js";
-import type { Pantalla, Sesion } from "./pantallas.js";
+import { siPuedeLlamar, type Pantalla, type Sesion } from "./pantallas.js";
 import type { BotonDeGoogle } from "./sesion.js";
 
 function respuesta(cuerpo: unknown, status = 200): Response {
@@ -59,7 +59,7 @@ describe("App", () => {
 
     const PANTALLAS: Pantalla[] = [
       { id: "equipos-lista", titulo: "Equipos", Componente: Muestra("Lista de equipos") },
-      { id: "prestamos-vencidos", titulo: "Vencidos", Componente: Muestra("Préstamos vencidos"), visible: (p) => p.it === true },
+      { id: "prestamos-vencidos", titulo: "Vencidos", Componente: Muestra("Préstamos vencidos"), visible: (s) => s.persona.it === true },
       { id: "prestamos-mios", titulo: "Mis préstamos", Componente: Muestra("Mis préstamos") },
     ];
 
@@ -95,6 +95,43 @@ describe("App", () => {
       expect(await screen.findByText("Lista de equipos para Luis con token-bueno")).toBeTruthy();
       expect(screen.queryByRole("button", { name: "Vencidos" })).toBeNull();
       expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["Equipos", "Mis préstamos"]);
+    });
+
+    it("una pantalla puede preguntar a la API si la persona la ve: con 403, no se enseña", async () => {
+      const deIt: Pantalla = { id: "prestamos-vencidos", titulo: "Vencidos", Componente: Muestra("Vencidos"),
+        visible: siPuedeLlamar("/api/prestamos/vencidos") };
+      const lista: Pantalla = { id: "equipos-lista", titulo: "Equipos", Componente: Muestra("Equipos") };
+      for (const [es, nombre] of [[true, "Ana"], [false, "Luis"]] as const) {
+        vi.stubGlobal("fetch", (url: string) =>
+          Promise.resolve(
+            url === "/api/config" ? respuesta({ googleClientId: "cliente" })
+              : url === "/api/yo" ? respuesta({ email: "x@example.com", nombre })
+                : es ? respuesta([]) : respuesta({ error: "Solo IT puede hacer esto." }, 403),
+          ),
+        );
+        const boton: BotonDeGoogle = (_elemento, _clientId, alEntrar) => {
+          alEntrar("token-bueno");
+          return Promise.resolve();
+        };
+        render(<App botonDeGoogle={boton} pantallas={[lista, deIt]} />);
+        expect(await screen.findByText(`Equipos para ${nombre} con token-bueno`)).toBeTruthy();
+        expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(es ? ["Equipos", "Vencidos"] : ["Equipos"]);
+        cleanup();
+      }
+    });
+
+    it("una pantalla cuya comprobación falla no se enseña", async () => {
+      const rota: Pantalla = { id: "x-rota", titulo: "Rota", Componente: Muestra("Rota"), visible: () => Promise.reject(new Error("x")) };
+      vi.stubGlobal("fetch", (url: string) =>
+        Promise.resolve(url === "/api/config" ? respuesta({ googleClientId: "cliente" }) : respuesta({ email: "a@b.c", nombre: "Ana" })),
+      );
+      const boton: BotonDeGoogle = (_elemento, _clientId, alEntrar) => {
+        alEntrar("t");
+        return Promise.resolve();
+      };
+      render(<App botonDeGoogle={boton} pantallas={[rota, PANTALLAS[0] as Pantalla]} />);
+      expect(await screen.findByText("Lista de equipos para Ana con t")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Rota" })).toBeNull();
     });
 
     it("sin la sesión no enseña ninguna pantalla", async () => {
