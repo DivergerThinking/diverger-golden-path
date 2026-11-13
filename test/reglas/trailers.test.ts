@@ -380,6 +380,14 @@ describe.skipIf(!HAY_GIT)("«Lanzado por» en la descripción de la PR del harne
     expect(errores).toContain("No se puede comprobar quién lanzó la ejecución: no se pudo leer la descripción de la PR");
   });
 
+  it("sin la descripción, los trailers de los commits se siguen comprobando (harness#794)", async () => {
+    git(["config", "core.hooksPath", join(repo, "sin-hooks")]);
+    commit("feat: TA-004 sin rol\n\nDiverger-Modelo: claude-sonnet-5-5\nDiverger-Tarea: TA-004\nDiverger-Iniciado-por: joselcs", HARNESS);
+    const { codigo, errores } = await comprobarPR({ ...LANZADO_POR_JOSELCS, fallos: { [`/repos/${REPO}/pulls/55`]: Infinity } });
+    expect(codigo).toBe(1);
+    expect(errores).toContain("Falta el trailer de rol (Diverger-Rol)");
+  });
+
   it("si no puede leer la descripción de una PR del harness, falla y dice por qué", async () => {
     commitDelHarness("joselcs");
     const { codigo, errores } = await comprobarPR(LANZADO_POR_JOSELCS, null);

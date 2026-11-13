@@ -33,6 +33,8 @@ export interface Datos {
   /** Cuántas veces responde 503 a cada ruta antes de contestar bien, como un fallo pasajero de la API (harness#794).
    * Se gasta al responder; Infinity responde 503 siempre. */
   fallos?: Record<string, number>;
+  /** El código con el que responde esos fallos; 503 si no se dice. */
+  codigoDeFallo?: number;
 }
 
 export const REPO = "DivergerThinking/app-de-prueba";
@@ -97,7 +99,7 @@ export async function arrancar(datos: Datos): Promise<{ url: string; servidor: S
     const quedan = datos.fallos?.[url.pathname] ?? 0;
     if (quedan > 0 && datos.fallos) {
       datos.fallos[url.pathname] = quedan - 1;
-      respuesta.writeHead(503, { "Content-Type": "application/json" });
+      respuesta.writeHead(datos.codigoDeFallo ?? 503, { "Content-Type": "application/json" });
       respuesta.end(JSON.stringify({ message: "Service Unavailable" }));
       return;
     }
