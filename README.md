@@ -31,18 +31,23 @@ Después, una persona administradora del repositorio:
 
 ```
 spec/contextos/<id>/api.openapi.json   contrato de cada bounded context
+spec/contextos/<id>/pantallas.md       pantallas de cada contexto: quién las ve, sus historias y sus operaciones
 src/<id>/index.ts                      interfaz pública del contexto: lo único que importan los demás
 src/<id>/api.gen.ts                    tipos generados del contrato (npm run gen; no se versionan)
 src/<id>/...                           lógica interna del contexto
 lib/                                   código común sin negocio: el inicio de sesión y el puerto de datos (datos.ts, firestore.ts)
 app/                                   servidor: arranque, autenticación y registro de los contextos
 app/contextos.gen.ts                   registro generado de los contextos de src/ (npm run gen; no se versiona)
-web/                                   frontend en React
+web/                                   frontend en React: App.tsx (inicio de sesión y menú) y pantallas.ts (lo común)
+web/<id>/index.tsx                     pantallas de cada contexto, con sus tests
+web/pantallas.gen.ts                   registro generado de las pantallas de web/ (npm run gen; no se versiona)
 infra/                                 infraestructura como código de la aplicación en GCP
 test/                                  pruebas de las reglas del repo
 ```
 
 El contexto `ejemplo` solo sirve para que todo funcione desde el primer momento: el arquitecto lo sustituye por los contextos de la aplicación. Para añadir un contexto: su contrato en `spec/contextos/<id>/api.openapi.json`, y su código en `src/<id>/`, con un `index.ts` que exporte sus funciones públicas y sus rutas en `rutas`. No hace falta registrarlo en ningún fichero común: `npm run gen` genera `app/contextos.gen.ts` con todas las carpetas de `src/` que tienen `index.ts`, y el servidor registra esas rutas. Así, dos tareas que construyen contextos distintos no tocan ningún fichero en común y sus PR se integran sin conflictos (golden-path#71). El nombre de la carpeta es el id del contexto, en minúsculas, con números y guiones; con otro nombre, `npm run gen` falla y dice cuál es.
+
+**Las pantallas van igual** (ADR 0053 del harness). Las de cada contexto se describen en `spec/contextos/<id>/pantallas.md` y viven en `web/<id>/`, con un `index.tsx` que exporta su lista `pantallas`: cada una con su `id`, su `titulo` en el menú, su componente y, si no la ve cualquiera, `visible(sesion)`, que puede preguntar a la API: `siPuedeLlamar(ruta)` la enseña solo si una operación de lectura no responde 401 ni 403, como la de los préstamos vencidos para las pantallas de IT, sin añadir al contrato una ruta para el rol. `npm run gen` genera `web/pantallas.gen.ts` con todas, y `web/App.tsx`, con la sesión iniciada, enseña el menú de las que la persona puede ver y la elegida, que recibe la sesión: el token y la persona de `/api/yo`. Para llamar a la API, `api(sesion, ruta)` de `web/pantallas.ts`, que pone el token y devuelve el mensaje de error de la API tal cual. Una pantalla no importa las de otro contexto (`lint:deps`), y cada una lleva sus tests con Testing Library, como `web/ejemplo/Saludo.test.tsx`. Ocultar una pantalla no protege nada: la API sigue respondiendo 403 a quien no puede hacer la operación.
 
 ## Reglas que comprueba el CI
 
