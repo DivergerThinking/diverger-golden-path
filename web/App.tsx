@@ -18,8 +18,11 @@ export function App({ botonDeGoogle, pantallas = pantallasDeLaAplicacion }: AppP
   const [sesion, setSesion] = useState<Sesion | null>(null);
   const [elegida, setElegida] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /** Las pantallas que la persona puede ver; null mientras se pregunta a cada una. */
-  const [visibles, setVisibles] = useState<Pantalla[] | null>(null);
+  /**
+   * Las pantallas que la persona de la sesión con ese token puede ver, según van respondiendo sus comprobaciones, y la
+   * primera que se enseñó, que es la abierta mientras la persona no elija otra.
+   */
+  const [visibles, setVisibles] = useState<{ token: string; ids: Record<string, true>; primera: string } | null>(null);
 
   useEffect(() => {
     const elemento = boton.current;
@@ -47,25 +50,29 @@ export function App({ botonDeGoogle, pantallas = pantallasDeLaAplicacion }: AppP
   useEffect(() => {
     if (!sesion) return;
     let vigente = true;
-    // Cada pantalla dice si la persona puede verla, también preguntando a la API; si falla, no se enseña.
-    const puedeVer = (p: Pantalla): Promise<boolean> =>
-      Promise.resolve()
+    // Cada pantalla dice si la persona puede verla, también preguntando a la API; si falla, no se enseña. Cada una entra
+    // en el menú al responder, sin esperar a las demás: una comprobación que no responde no deja a nadie sin menú.
+    for (const p of pantallas) {
+      void Promise.resolve()
         .then(() => (p.visible ? p.visible(sesion) : true))
-        .catch(() => false);
-    Promise.all(pantallas.map(puedeVer))
-      .then((puede) => {
-        if (vigente) setVisibles(pantallas.filter((_, i) => puede[i] === true));
-      })
-      .catch(() => {
-        if (vigente) setVisibles([]);
-      });
+        .catch(() => false)
+        .then((si) => {
+          if (!vigente || !si) return;
+          setVisibles((antes) =>
+            antes?.token === sesion.token
+              ? { ...antes, ids: { ...antes.ids, [p.id]: true } }
+              : { token: sesion.token, ids: { [p.id]: true }, primera: p.id });
+        });
+    }
     return () => {
       vigente = false;
     };
   }, [sesion, pantallas]);
 
-  const lista = visibles ?? [];
-  const actual = lista.find((p) => p.id === elegida) ?? lista[0];
+  const deLaSesion = sesion && visibles?.token === sesion.token ? visibles : null;
+  const lista = deLaSesion ? pantallas.filter((p) => deLaSesion.ids[p.id]) : [];
+  // Sin elegir, la abierta es la primera que se enseñó, para que no cambie si después llega una que va antes en el menú.
+  const actual = lista.find((p) => p.id === (elegida ?? deLaSesion?.primera)) ?? lista[0];
 
   return (
     <main>
