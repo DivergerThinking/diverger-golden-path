@@ -1,4 +1,4 @@
-// Dependencias con vulnerabilidades conocidas (harness#894, ADR 0064 del harness): el CI falla con cualquier aviso
+// Dependencias con vulnerabilidades conocidas (harness#894, ADR 0072 del harness): el CI falla con cualquier aviso
 // alto o crítico de `npm audit` que no tenga una excepción en vigor en .github/diverger/excepciones-sca.json. Se
 // prueba el script del CI con salidas de `npm audit --json` de juguete y con el fichero de la plantilla.
 import { spawnSync } from "node:child_process";

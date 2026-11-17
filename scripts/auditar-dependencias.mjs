@@ -1,4 +1,4 @@
-// Dependencias con vulnerabilidades conocidas (SCA) con excepciones por aviso (harness#894, ADR 0064 del harness).
+// Dependencias con vulnerabilidades conocidas (SCA) con excepciones por aviso (harness#894, ADR 0072 del harness).
 // Uso en el CI: node scripts/auditar-dependencias.mjs. Ejecuta `npm audit --json` y falla con cualquier aviso alto o
 // crítico que no tenga una excepción en vigor en .github/diverger/excepciones-sca.json.
 //
