@@ -234,8 +234,8 @@ describe("los workers no pueden desplegar", () => {
 // G2 de la auditoría de seguridad del harness (harness#660, ADR 0037 del harness): la clave de la GitHub App es un
 // secreto del environment diverger-app, que solo admite la rama main, y no del repositorio. Un workflow subido en otra
 // rama no la lee: GitHub solo da los secretos de un environment a los jobs que lo nombran, y compara su regla de ramas
-// con el GITHUB_REF de la ejecución. Con deployment: false no se crea un despliegue en cada job, y la regla de ramas
-// sigue valiendo.
+// con el GITHUB_REF de la ejecución. Con deployment: false no se crea un despliegue en cada job; que la regla de ramas
+// siga valiendo así lo da a entender GitHub, y lo comprobará la prueba real de harness#660, todavía pendiente.
 describe("la clave de la App solo en el environment diverger-app", () => {
   const todos = workflows.flatMap(({ nombre, texto }) =>
     Object.entries(jobs(texto)).map(([job, cuerpo]) => ({ nombre, job, cuerpo })),
