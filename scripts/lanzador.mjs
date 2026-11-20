@@ -98,11 +98,14 @@ export async function quienLanzo({ api, repo, ejecucion, iniciativa, pr }) {
  */
 async function quienSubioElPlan({ api, repo, iniciativa, bucle }) {
   const inicio = Date.parse(bucle.run_started_at ?? bucle.created_at);
-  const rama = new RegExp(`^plan/${iniciativa}(-[0-9]+)?$`);
+  // Sin construir una expresión regular con la iniciativa, que llega de fuera: la rama es plan/<iniciativa> o esa
+  // misma con un sufijo numérico.
+  const base = `plan/${iniciativa}`;
+  const esDelPlan = (rama) => rama === base || (rama.startsWith(`${base}-`) && /^[0-9]+$/.test(rama.slice(base.length + 1)));
   const { workflow_runs: planes = [] } = await api(
     `repos/${repo}/actions/workflows/diverger-plan.yml/runs?event=push&per_page=100&created=${encodeURIComponent(`<=${bucle.created_at}`)}`);
   const subidas = planes.filter((p) => ruta(p.path) === WORKFLOW_PLAN && p.event === "push"
-    && rama.test(p.head_branch ?? "") && Date.parse(p.created_at) <= inicio)
+    && esDelPlan(p.head_branch ?? "") && Date.parse(p.created_at) <= inicio)
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   if (!subidas.length) {
     throw new Error(`El bucle ${bucle.id} de ${iniciativa} se lanzó al integrarse un plan, `
