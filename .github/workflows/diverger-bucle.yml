@@ -49,6 +49,11 @@ jobs:
   bucle:
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    # La clave de la App es un secreto del environment diverger-app, que solo admite main (G2, harness#660, ADR 0037 del
+    # harness): un workflow subido en otra rama no la lee. deployment: false, porque el job no despliega nada.
+    environment:
+      name: diverger-app
+      deployment: false
     permissions:
       contents: read
       id-token: write # Solo para la cuenta de telemetría: la comprobación previa, el arranque y el final (ADR 0017).
