@@ -99,7 +99,9 @@ describe.skipIf(process.platform === "win32")("lanzar el bucle al integrarse la 
     writeFileSync(join(carpeta, "gh"), GH);
     chmodSync(join(carpeta, "gh"), 0o755);
   });
-  afterEach(() => rmSync(carpeta, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(carpeta, { recursive: true, force: true });
+  });
 
   function lanzar(entorno: Record<string, string>): { codigo: number | null; resumen: string; lanzados: string; errores: string } {
     const r = spawnSync("bash", ["-c", LANZAR.steps.at(-1)?.run ?? "exit 9"], { encoding: "utf8", env: {
