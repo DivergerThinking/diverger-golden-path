@@ -261,6 +261,8 @@ describe("la clave de la App solo en el environment diverger-app", () => {
     }
   });
 
+  // Se tolera la línea del paso previo del bucle (EN-GP-04), que solo mira que la variable con el nombre de la cuenta no
+  // está vacía: es un nombre, no una credencial, y la cuenta de despliegue solo acepta el environment staging.
   it("un job del environment diverger-app no usa la cuenta de despliegue", () => {
     for (const { nombre, job, cuerpo } of todos.filter(({ cuerpo }) => BLOQUE_APP.test(cuerpo))) {
       expect(cuerpo.replace("          GCP_DEPLOY_SA: ${{ vars.GCP_DEPLOY_SA }}\n", ""), `${nombre}/${job}`)
