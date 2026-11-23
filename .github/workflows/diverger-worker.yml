@@ -257,6 +257,10 @@ jobs:
           mkdir -p "$PLUGIN_NUCLEO/.claude-plugin" "$PLUGIN_NUCLEO/agents"
           echo '{"name": "diverger"}' > "$PLUGIN_NUCLEO/.claude-plugin/plugin.json"
           cp .diverger-dev/plugins/diverger/agents/revisor-codigo.md "$PLUGIN_NUCLEO/agents/"
+          # El modelo de cada agente que juzga: el de su cabecera, que propone el harness, o el que fija el proyecto en
+          # models de .diverger/settings.json (harness#1107, ADR 0081). Se cambia en la copia, nunca en el núcleo.
+          bash .github/diverger/modelo-agente.sh "$PLUGIN_NUCLEO/agents/revisor-codigo.md" codeReviewer
+          bash .github/diverger/modelo-agente.sh "$PLUGIN_QUALITY/agents/auditor-seguridad.md" securityAuditor
 
       # La tarjeta de la tarea pasa a «En curso» en sus Projects (HU-EJE-10, ADR 0063 del harness), con tarjetas.py del
       # núcleo. El token de la App solo puede escribir en los Projects de la organización y leer las issues; lo usa solo

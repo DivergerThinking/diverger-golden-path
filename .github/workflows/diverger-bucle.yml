@@ -282,6 +282,8 @@ jobs:
           mkdir -p "$plugin/.claude-plugin" "$plugin/agents"
           echo '{"name": "diverger"}' > "$plugin/.claude-plugin/plugin.json"
           cp "$NUCLEO/plugins/diverger/agents/analista-bloqueos.md" "$plugin/agents/"
+          # Opus por defecto, o el que fija el proyecto en models.blockingAnalyst (harness#1107, ADR 0081).
+          bash .github/diverger/modelo-agente.sh "$plugin/agents/analista-bloqueos.md" blockingAnalyst
           echo "PLUGIN_NUCLEO=$plugin" >> "$GITHUB_ENV"
       - name: Instalar Claude Code
         id: claude
