@@ -22,9 +22,13 @@
   "dependencies": {
     "@fastify/static": "^10.1.7",
     "@google-cloud/firestore": "9.4.0",
+    "@mantine/core": "^9.8.2",
+    "@mantine/hooks": "^9.8.2",
+    "@radix-ui/themes": "^3.3.0",
     "fastify": "^5.12.7",
     "google-auth-library": "^11.3.1",
     "react": "^19.3.1",
+    "react-aria-components": "^1.22.1",
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
@@ -35,6 +39,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "axe-core": "^4.14.1",
     "dependency-cruiser": "^18.7.0",
     "eslint": "^10.13.0",
     "eslint-plugin-react-hooks": "^7.1.1",
