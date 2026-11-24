@@ -9,8 +9,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
 const RAIZ = join(import.meta.dirname, "..", "..");
-const WF = parse(readFileSync(join(RAIZ, ".github", "workflows", "diverger-worker.yml"), "utf8"));
-const PASO: string = WF.jobs.worker.steps.find((p: { name?: string }) => p.name === "Rama y PR").run;
+const WF = parse(readFileSync(join(RAIZ, ".github", "workflows", "diverger-worker.yml"), "utf8")) as {
+  jobs: { worker: { steps: { name?: string; run?: string }[] } };
+};
+const PASO = WF.jobs.worker.steps.find((p) => p.name === "Rama y PR")?.run ?? "";
 const HAY_JQ = spawnSync("bash", ["-c", "command -v jq"]).status === 0;
 
 // Las líneas del paso que calculan la subissue y las que la escriben en la PR.
