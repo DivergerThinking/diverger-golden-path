@@ -41,6 +41,11 @@ on:
         required: false
         type: string
         default: ""
+      ejecucion:
+        description: Solo lo rellena launch_unattended con el identificador de la ejecución de la sesión, el del nombre de su Project; a mano se deja vacío
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -71,6 +76,7 @@ jobs:
       INICIATIVA: ${{ inputs.initiative }}
       MAX_WORKERS: ${{ inputs.max-workers }}
       REINICIAR: ${{ inputs.restart }}
+      EJECUCION: ${{ inputs.ejecucion }}
       NUCLEO_REF: ${{ vars.DIVERGER_HARNESS_REF || 'main' }}
       TELEMETRIA: ${{ vars.GCP_WIF_PROVIDER != '' && vars.GCP_TELEMETRY_SA != '' }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -80,6 +86,7 @@ jobs:
           fallar() { echo "::error::$1"; exit 1; }
           [[ "$INICIATIVA" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || fallar "La iniciativa «$INICIATIVA» no es válida"
           [[ -z "$MAX_WORKERS" || "$MAX_WORKERS" =~ ^[1-3]$ ]] || fallar "max-workers tiene que estar vacío o ser un entero entre 1 y 3"
+          [[ -z "$EJECUCION" || "$EJECUCION" =~ ^[0-9a-f]{8}$ ]] || fallar "ejecucion tiene que estar vacía o tener 8 cifras hexadecimales"
           [[ "$NUCLEO_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$ ]] || fallar "DIVERGER_HARNESS_REF no es válida"
       # La rama base, con el GITHUB_TOKEN del job guardado para que el bucle haga git pull. Ese token puede escribir en
       # Actions e issues de este repositorio, lo mismo que hace el bucle; en el contenido, solo leer.
@@ -166,6 +173,9 @@ jobs:
           # El límite de workers de código es el del proyecto (maxCodeWorkers, ADR 0035); la entrada solo lo baja.
           [ -n "$MAX_WORKERS" ] && opciones+=(--max-workers "$MAX_WORKERS")
           [ "$REINICIAR" = "true" ] && opciones+=(--restart)
+          # La ejecución que empezó en la sesión (HU-GP-06, ADR 0061 del harness): el bucle sigue con su identificador, el
+          # del nombre de su Project. Un run.json del bucle ya guardado conserva el suyo.
+          [ -n "$EJECUCION" ] && opciones+=(--run-id "$EJECUCION")
           [ "$GCP_ARRANQUE" = "success" ] && opciones+=(--log-project "$GCP_PROJECT_ID")
           [[ "$LANZADO_POR" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] && opciones+=(--notify "$LANZADO_POR")
           set +e

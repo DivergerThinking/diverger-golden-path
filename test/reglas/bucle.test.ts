@@ -51,7 +51,7 @@ describe("workflow del bucle desatendido", () => {
   it("se lanza a mano con la iniciativa, los workers a la vez y el reinicio", () => {
     expect(Object.keys(WF.on)).toEqual(["workflow_dispatch"]);
     const entradas = WF.on.workflow_dispatch.inputs;
-    expect(Object.keys(entradas)).toEqual(["initiative", "max-workers", "restart", "lanzado-por"]);
+    expect(Object.keys(entradas)).toEqual(["initiative", "max-workers", "restart", "lanzado-por", "ejecucion"]);
     expect(entradas.initiative).toMatchObject({ required: true, type: "string" });
     expect(WF["run-name"]).toBe("diverger-bucle ${{ inputs.initiative }}");
   });
@@ -64,6 +64,14 @@ describe("workflow del bucle desatendido", () => {
     const bucle = paso("Bucle").run ?? "";
     expect(bucle).toContain('[ -n "$MAX_WORKERS" ] && opciones+=(--max-workers "$MAX_WORKERS")');
     expect(bucle).not.toContain('--max-workers "$MAX_WORKERS" --project');
+  });
+
+  it("sigue con el identificador de la ejecución de la sesión, el del nombre de su Project (harness HU-GP-06)", () => {
+    expect(WF.on.workflow_dispatch.inputs.ejecucion).toMatchObject({ required: false, type: "string", default: "" });
+    const validar = paso("Validar las entradas").run ?? "";
+    expect(validar).toContain('[[ -z "$EJECUCION" || "$EJECUCION" =~ ^[0-9a-f]{8}$ ]]');
+    const bucle = paso("Bucle").run ?? "";
+    expect(bucle).toContain('[ -n "$EJECUCION" ] && opciones+=(--run-id "$EJECUCION")');
   });
 
   it("un solo bucle por iniciativa, sin cancelar el que está en marcha", () => {
