@@ -95,6 +95,21 @@ Es un programa sin modelo, `bucle.py` del núcleo, que el job descarga del harne
 
 Los workers, las issues de las tareas bloqueadas y el cierre de las PR con conflictos van con el token del propio job (`GITHUB_TOKEN`), con los permisos que pide `diverger-bucle.yml`. Además, necesita la GitHub App `diverger-harness` instalada en este repositorio (Actions e Issues: escritura, Contents y Pull requests: lectura) y en el harness (Contents: lectura), con la variable `DIVERGER_HARNESS_APP_ID` y el secreto `DIVERGER_HARNESS_APP_KEY` del environment `diverger-app`. La clave de la App va en ese environment, limitado a `main`, y no en el repositorio (G2 de la auditoría de seguridad, harness#660, ADR 0037 del harness): GitHub solo da los secretos de un environment a los jobs que lo nombran, y compara su regla de ramas con la rama de la ejecución, así que un workflow subido en otra rama no la lee. La nombran los jobs de `diverger-bucle.yml`, `diverger-worker.yml` y `diverger-tarjeta.yml`, con `deployment: false` para no dejar un despliegue en cada ejecución; el bucle y los workers se lanzan desde `main`, y la tarjeta corre al integrarse una PR en `main`, cuando GitHub da a la ejecución esa rama, y se salta si la PR se integra en otra. El environment y su secreto los crea el titular con `.\infra\titular.ps1 clave-app` del harness. La variable `DIVERGER_HARNESS_REF` fija la versión del núcleo (por defecto, `main`).
 
+## La PR del plan
+
+El bucle y sus workers leen el plan de una iniciativa (las tareas, `spec/` y `tests/aceptacion/`) de la rama base, así que el plan tiene que integrarse antes de lanzar. `.github/workflows/diverger-plan.yml` se ocupa de esa PR (harness#711, ADR 0074 del harness).
+
+La rama `plan/<iniciativa>` la sube `launch_unattended` de Diverger desde la sesión de la persona, con un commit que ya lleva los trailers que pide la comprobación `trailers`. Si la PR la abriera esa persona, no podría aprobarla: trae `tests/aceptacion/`, que `CODEOWNERS` reserva a sus propietarios, y GitHub no deja aprobar una PR propia. Por eso el workflow hace dos cosas:
+
+- **Con el push de una rama `plan/**`,** abre la PR con la identidad del harness, con «Lanzado por @login» de quien subió la rama, y activa el auto-merge. Una persona propietaria de la suite la revisa y la aprueba, y se integra sola.
+- **Con la PR integrada,** lanza `diverger-bucle.yml` de la iniciativa, sin que nadie tenga que pedirlo otra vez. Solo si el commit del plan lleva el trailer `Diverger-Lanzar: <iniciativa>`, que pone `launch_unattended` cuando la persona pide lanzar la construcción. Una rama `plan/` subida a mano no lanza nada. Tampoco se lanza si el bucle de esa iniciativa ya está en marcha.
+
+Por ejemplo, con la rama `plan/prestamos` y el trailer `Diverger-Lanzar: prestamos`, al integrarse la PR se lanza `diverger-bucle.yml` con `initiative=prestamos` en la rama base. La rama puede llevar un sufijo, `plan/prestamos-2`, cuando una ejecución anterior dejó la suya en el remoto: la iniciativa sale del trailer, no de la rama.
+
+**Permisos.** El workflow no hace checkout: no ejecuta nada de la rama. El token de la App solo escribe contenido y PR de este repositorio, como el del worker. El bucle se lanza con el `GITHUB_TOKEN` del job, que solo tiene Actions de escritura.
+
+**Quién lanzó.** Un bucle que arranca así lo lanza `github-actions[bot]`, que no es una persona. `scripts/lanzador.mjs` toma entonces como responsable a quien subió la rama del plan: el actor del push en las ejecuciones de `diverger-plan.yml`, que es un dato de GitHub. El aviso de una tarea bloqueada va a esa misma persona, que llega al bucle en la entrada `lanzado-por`; esa entrada solo cuenta cuando el bucle lo lanza `github-actions[bot]`.
+
 ## Datos: el puerto de persistencia
 
 Los contextos guardan y leen sus datos solo a través del puerto de `lib/datos.ts` (HU-GP-01). El servidor se lo pasa a cada contexto al registrarlo, en las opciones de su plugin:

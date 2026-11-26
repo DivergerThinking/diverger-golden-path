@@ -242,14 +242,21 @@ describe("la clave de la App solo en el environment diverger-app", () => {
   );
   const BLOQUE_APP = /^ {4}environment:\n {6}name: diverger-app\n {6}deployment: false$/m;
 
-  it("los jobs que piden el token de la App son los del bucle, el worker y la tarjeta", () => {
+  // El job abrir de diverger-plan.yml corre con el push de una rama plan/**, no en main, así que no puede estar en
+  // diverger-app. Mientras sea así, clave-app de titular.ps1 deja el secreto del repositorio y la G2 sigue abierta en
+  // los niveles: se cierra cuando ese job se lance desde main (harness#660, harness#711).
+  const FUERA_DEL_ENTORNO = ["diverger-plan.yml/abrir"];
+
+  it("los jobs que piden el token de la App son los del bucle y su análisis, el worker, la tarjeta y el plan", () => {
     const conClave = todos.filter(({ cuerpo }) => cuerpo.includes("secrets.DIVERGER_HARNESS_APP_KEY"));
     expect(conClave.map(({ nombre, job }) => `${nombre}/${job}`).sort()).toEqual([
-      "diverger-bucle.yml/bucle", "diverger-tarjeta.yml/hecho", "diverger-worker.yml/worker"]);
+      "diverger-bucle.yml/analisis", "diverger-bucle.yml/bucle", "diverger-plan.yml/abrir", "diverger-tarjeta.yml/hecho",
+      "diverger-worker.yml/worker"]);
   });
 
   it("cada job que usa la clave de la App declara el environment diverger-app sin crear un despliegue", () => {
     for (const { nombre, job, cuerpo } of todos.filter(({ cuerpo }) => cuerpo.includes("secrets.DIVERGER_HARNESS_APP_KEY"))) {
+      if (FUERA_DEL_ENTORNO.includes(`${nombre}/${job}`)) continue;
       expect(cuerpo, `${nombre}/${job}`).toMatch(BLOQUE_APP);
     }
   });
