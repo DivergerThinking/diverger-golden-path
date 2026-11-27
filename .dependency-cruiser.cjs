@@ -27,6 +27,16 @@ module.exports = {
       to: { path: "^web/([^/]+)/", pathNot: ["^web/$1/", "^web/kit/"] },
     },
     {
+      name: "pantallas-solo-con-el-kit",
+      severity: "error",
+      comment:
+        "Una pantalla (web/<id>/) solo importa lo suyo, web/pantallas.ts, el sistema de diseño por su web/kit/index.ts y React: ni lo interno del kit ni la biblioteca que lleva dentro, para que un cliente pueda cambiarlo (ADR 0058 del harness, EN-GP-14).",
+      from: { path: "^web/([^/]+)/", pathNot: ["^web/kit/", "[.]test[.]tsx?$"] },
+      to: {
+        pathNot: ["^web/$1/", "^web/kit/index[.]ts$", "^web/pantallas[.]ts$", "^src/[^/]+/index[.]ts$", "node_modules/(react|react-dom)/"],
+      },
+    },
+    {
       name: "contextos-sin-app-ni-web",
       severity: "error",
       comment: "Un contexto no depende del servidor ni del frontend.",
