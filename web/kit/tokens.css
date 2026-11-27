@@ -1,0 +1,62 @@
+/*
+ * Tokens del sistema de diseño (ADR 0058 del harness): la imagen de Diverger, sacada de diverger.ai el 24/11/2026.
+ * Es lo único que cambia un cliente para poner su marca: kit.css solo usa estas variables, nunca un color suelto.
+ * El tema oscuro es el de la web y va por defecto; el claro se aplica con prefers-color-scheme o con data-tema="claro"
+ * en <html>, y data-tema="oscuro" fuerza el oscuro. Cada par de texto y fondo pasa WCAG AA (lo comprueba tokens.test.tsx).
+ */
+:root {
+  --color-fondo: #0e131c;
+  --color-superficie: #0c172c;
+  --color-texto: #fcfcfd;
+  --color-texto-secundario: #93a0b8;
+  --color-primario: #1cbc83;
+  --color-primario-texto: #0e131c;
+  --color-foco: #17ffac;
+  --color-enlace: #8cffd6;
+  --color-error: #f3505c;
+  --color-exito: #1cbc83;
+  --color-borde: #c0cade;
+
+  --fuente: "Aspekta", system-ui, sans-serif;
+  --tamano-texto: 1rem;
+  --tamano-titulo: 1.75rem;
+  --espacio-1: 0.25rem;
+  --espacio-2: 0.5rem;
+  --espacio-3: 1rem;
+  --espacio-4: 1.5rem;
+  --radio: 0.75rem;
+  --radio-tarjeta: 1rem;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-tema="oscuro"]) {
+    --color-fondo: #ffffff;
+    --color-superficie: #f3f6fa;
+    --color-texto: #0e131c;
+    --color-texto-secundario: #4a5568;
+    --color-primario: #0a6e4b;
+    --color-primario-texto: #ffffff;
+    --color-foco: #0a6e4b;
+    --color-enlace: #102958;
+    --color-error: #b3202c;
+    --color-exito: #0a6e4b;
+    --color-borde: #5f6b80;
+    color-scheme: light;
+  }
+}
+
+:root[data-tema="claro"] {
+  --color-fondo: #ffffff;
+  --color-superficie: #f3f6fa;
+  --color-texto: #0e131c;
+  --color-texto-secundario: #4a5568;
+  --color-primario: #0a6e4b;
+  --color-primario-texto: #ffffff;
+  --color-foco: #0a6e4b;
+  --color-enlace: #102958;
+  --color-error: #b3202c;
+  --color-exito: #0a6e4b;
+  --color-borde: #5f6b80;
+  color-scheme: light;
+}

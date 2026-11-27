@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { BotonDeGoogle } from "./sesion.js";
 import type { Pantalla, Persona, Sesion } from "./pantallas.js";
 import { pantallas as pantallasDeLaAplicacion } from "./pantallas.gen.js";
+import { Aviso, Menu, Pagina } from "./kit/index.js";
 
 export interface AppProps {
   botonDeGoogle: BotonDeGoogle;
@@ -11,7 +12,8 @@ export interface AppProps {
 
 /**
  * Pide la configuración y muestra el botón de Google. Con la sesión iniciada, saluda a la persona y enseña el menú de
- * las pantallas que puede ver y la elegida, que recibe el token y la persona (ADR 0053 del harness).
+ * las pantallas que puede ver y la elegida, que recibe el token y la persona (ADR 0053 del harness). Todo con los
+ * componentes del sistema de diseño, web/kit/ (ADR 0058 del harness).
  */
 export function App({ botonDeGoogle, pantallas = pantallasDeLaAplicacion }: AppProps) {
   const boton = useRef<HTMLDivElement>(null);
@@ -75,30 +77,22 @@ export function App({ botonDeGoogle, pantallas = pantallasDeLaAplicacion }: AppP
   const actual = lista.find((p) => p.id === (elegida ?? deLaSesion?.primera)) ?? lista[0];
 
   return (
-    <main>
-      <h1>Aplicación</h1>
+    <Pagina
+      titulo="Aplicación"
+      menu={
+        sesion && lista.length > 0 ? (
+          <Menu
+            etiqueta="Pantallas"
+            opciones={lista.map((p) => ({ id: p.id, texto: p.titulo }))}
+            actual={actual?.id}
+            alElegir={setElegida}
+          />
+        ) : undefined
+      }
+    >
       {sesion ? <p>Hola, {sesion.persona.nombre}</p> : <div ref={boton} />}
-      {sesion && lista.length > 0 && (
-        <nav aria-label="Pantallas">
-          <ul>
-            {lista.map((p) => (
-              <li key={p.id}>
-                <button
-                  type="button"
-                  aria-current={p.id === actual?.id ? "page" : undefined}
-                  onClick={() => {
-                    setElegida(p.id);
-                  }}
-                >
-                  {p.titulo}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      )}
       {sesion && actual && <actual.Componente key={actual.id} sesion={sesion} />}
-      {error && <p role="alert">{error}</p>}
-    </main>
+      {error && <Aviso tipo="error">{error}</Aviso>}
+    </Pagina>
   );
 }
