@@ -22,9 +22,9 @@ module.exports = {
       name: "pantallas-de-cada-contexto",
       severity: "error",
       comment:
-        "Las pantallas de un contexto (web/<id>/) no importan las de otro: cada tarea construye las suyas sin tocar las demás (ADR 0053 del harness). Lo común está en web/pantallas.ts.",
+        "Las pantallas de un contexto (web/<id>/) no importan las de otro: cada tarea construye las suyas sin tocar las demás (ADR 0053 del harness). Lo común está en web/pantallas.ts y el sistema de diseño, en web/kit/ (ADR 0058 del harness).",
       from: { path: "^web/([^/]+)/" },
-      to: { path: "^web/([^/]+)/", pathNot: "^web/$1/" },
+      to: { path: "^web/([^/]+)/", pathNot: ["^web/$1/", "^web/kit/"] },
     },
     {
       name: "contextos-sin-app-ni-web",

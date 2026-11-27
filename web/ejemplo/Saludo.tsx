@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { api, type Sesion } from "../pantallas.js";
+import { Aviso } from "../kit/index.js";
 
 interface RespuestaSaludo {
   mensaje: string;
 }
 
-/** Pide el saludo a GET /api/ejemplo/saludo y lo enseña; si la API falla, enseña su mensaje. */
+/** Pide el saludo a GET /api/ejemplo/saludo y lo enseña; si la API falla, enseña su mensaje con el
+ * Aviso del sistema de diseño (web/kit/, ADR 0058 del harness), como todas las pantallas. */
 export function Saludo({ sesion }: { sesion: Sesion }) {
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +26,7 @@ export function Saludo({ sesion }: { sesion: Sesion }) {
     <section aria-labelledby="saludo">
       <h2 id="saludo">Saludo</h2>
       {mensaje && <p>{mensaje}</p>}
-      {error && <p role="alert">{error}</p>}
+      {error && <Aviso tipo="error">{error}</Aviso>}
     </section>
   );
 }
